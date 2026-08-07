@@ -29,6 +29,7 @@ In this example you can see a cropped section of the street with a trash can. Th
 
 - REST API to be invoked by other applications
 - Intuitive frontend UI to manage swatch and use the **Color Playground** to fine tune colors for the config.
+- Audio monitors that listen to a camera's RTSP audio for sustained mechanical noise (e.g. a kitchen hood fan), distinguishing it from speech/music.
 - [HomeAssistant Integration](https://github.com/MaiorDomus/swatch-hass-integration)
 - [HomeAssistant Addon](https://github.com/MaiorDomus/swatch-hass-addon)
 

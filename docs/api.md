@@ -40,7 +40,11 @@ Take the `camera_name` config and `imageUrl` to run detection and see which obje
 
 ## `/api/<label>/latest`
 
-Returns the latest results for the given label. `all` can be passed to get a result for all labels.
+Returns the latest results for the given label. `all` can be passed to get a result for
+all labels. A label can be either an object name (from `objects`/zone `objects`) or an
+`audio_monitors` name — both share this endpoint and are merged together under `all`.
+
+Object detection result:
 
 ```json
 {
@@ -48,7 +52,18 @@ Returns the latest results for the given label. `all` can be passed to get a res
         "area":2818,
         "camera_name":"front_doorbell_cam",
         "result":true,
+        "solidity":0.87,
         "variant":"overcast"
+    }
+} // json
+```
+
+Audio monitor result:
+
+```json
+{
+    "kitchen_hood":{
+        "result":true
     }
 } // json
 ```
