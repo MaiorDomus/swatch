@@ -13,7 +13,7 @@
 
 # swatch
 
-Color detection in images to capture presence of known objects.
+Detects known objects by color in camera images and sustained mechanical sounds (e.g. a kitchen hood fan) from camera audio.
 
 ## Why?
 
