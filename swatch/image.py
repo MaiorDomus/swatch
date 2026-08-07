@@ -37,7 +37,17 @@ class ImageProcessor:
     ) -> dict[str, Any]:
         """Check specific image for known color values."""
         snapshot_config = self.config.cameras[camera_name].snapshot_config
-        best_fail: dict[str, Any] = {}
+        # area=-1 is a sentinel guaranteed to lose to any real match count
+        # (including zero), so a variant that matches nothing still produces
+        # a well-formed "result": False response instead of a bare {} --
+        # which downstream (the HTTP API, then the HA integration) can't
+        # distinguish from "no data at all" and would leave callers unable
+        # to tell "confirmed off" from "unknown".
+        best_fail: dict[str, Any] = {
+            "result": False,
+            "area": -1,
+            "camera_name": camera_name,
+        }
 
         for variant_name, color_variant in obj_config.color_variants.items():
             now_time = datetime.datetime.now().strftime("%H:%M")
