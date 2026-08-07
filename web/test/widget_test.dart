@@ -38,8 +38,28 @@ void main() {
     },
   };
 
+  final configWithAudioMonitors = {
+    ...config,
+    "audio_monitors": {
+      "kitchen_hood": {
+        "rtsp_url": "rtsps://192.168.1.1:7441/abc",
+      },
+    },
+  };
+
   test("Config is parsed correctly", () {
     final swatchConfig = Config(config);
     assert(swatchConfig.cameras.isNotEmpty);
+  });
+
+  test("Config with no audio_monitors key parses to an empty list", () {
+    final swatchConfig = Config(config);
+    assert(swatchConfig.audioMonitors.isEmpty);
+  });
+
+  test("Config audio_monitors are parsed as a list of names", () {
+    final swatchConfig = Config(configWithAudioMonitors);
+    assert(swatchConfig.audioMonitors.length == 1);
+    assert(swatchConfig.audioMonitors.first == "kitchen_hood");
   });
 }

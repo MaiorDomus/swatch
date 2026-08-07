@@ -57,5 +57,5 @@ List<CollapsibleItem> getSidebarRoutes(
 }
 
 /// URLs
-const urlGitHubReadme = "https://github.com/NickM-27/swatch";
-const urlGitHubDocs = "https://github.com/NickM-27/swatch/tree/main/docs";
+const urlGitHubReadme = "https://github.com/MaiorDomus/swatch";
+const urlGitHubDocs = "https://github.com/MaiorDomus/swatch/tree/main/docs";

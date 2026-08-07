@@ -5,6 +5,7 @@ class Config {
 
   Map<String, Camera> cameras = {};
   Map<String, Detectable> objects = {};
+  List<String> audioMonitors = [];
 
   Config(final Map<String, dynamic> json) {
     json["cameras"].forEach((name, json) => {
@@ -14,6 +15,10 @@ class Config {
     json["objects"].forEach((name, json) => {
       objects[name] = Detectable(json)
     });
+
+    if (json["audio_monitors"] != null) {
+      audioMonitors = List<String>.from(json["audio_monitors"].keys);
+    }
   }
 
   Config.template();

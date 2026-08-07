@@ -34,7 +34,7 @@ class SettingsRouteState extends State<SettingsRoute> {
                 isCollapsed: true,
                 items: getSidebarRoutes(context, SettingsRoute.route),
                 avatarImg: const NetworkImage(
-                  "https://raw.githubusercontent.com/NickM-27/swatch/master/assets/swatch.png",
+                  "https://raw.githubusercontent.com/MaiorDomus/swatch/master/assets/swatch.png",
                 ),
                 body: _SettingsView(),
                 backgroundColor: Colors.blueGrey[700]!,

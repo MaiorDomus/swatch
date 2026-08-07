@@ -36,7 +36,7 @@ class ColorPlaygroundRouteState extends State<ColorPlaygroundRoute> {
                 isCollapsed: true,
                 items: getSidebarRoutes(context, ColorPlaygroundRoute.route),
                 avatarImg: const NetworkImage(
-                  "https://raw.githubusercontent.com/NickM-27/swatch/master/assets/swatch.png",
+                  "https://raw.githubusercontent.com/MaiorDomus/swatch/master/assets/swatch.png",
                 ),
                 body: _ColorPlaygroundView(),
                 backgroundColor: Colors.blueGrey[700]!,

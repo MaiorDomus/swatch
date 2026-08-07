@@ -34,7 +34,7 @@ class DetectionListRouteState extends State<DetectionListRoute> {
                 isCollapsed: true,
                 items: getSidebarRoutes(context, DetectionListRoute.route),
                 avatarImg: const NetworkImage(
-                  "https://raw.githubusercontent.com/NickM-27/swatch/master/assets/swatch.png",
+                  "https://raw.githubusercontent.com/MaiorDomus/swatch/master/assets/swatch.png",
                 ),
                 body: _DetectionsView(),
                 backgroundColor: Colors.blueGrey[700]!,

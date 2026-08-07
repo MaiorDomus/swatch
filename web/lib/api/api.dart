@@ -79,6 +79,19 @@ class SwatchApi {
     }
   }
 
+  Future<Map<String, dynamic>> getLatestForLabel(final String label) async {
+    final base = "/api/$label/latest";
+    final response = await http.get(Uri.http(_swatchHost, base)).timeout(
+          const Duration(seconds: 15),
+        );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      return {};
+    }
+  }
+
   Future<Uint8List> testImageMask(
     Uint8List image,
     String colorLower,

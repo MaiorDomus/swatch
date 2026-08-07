@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_layout_grid/flutter_layout_grid.dart';
 import 'package:swatch/api/api.dart';
+import 'package:swatch/components/component_audio_monitor.dart';
 import 'package:swatch/components/component_camera.dart';
 import 'package:swatch/const.dart';
 import 'package:swatch/ext/extension_double.dart';
@@ -36,7 +37,7 @@ class DashboardRouteState extends State<DashboardRoute> {
                 isCollapsed: true,
                 items: getSidebarRoutes(context, DashboardRoute.route),
                 avatarImg: const NetworkImage(
-                  "https://raw.githubusercontent.com/NickM-27/swatch/master/assets/swatch.png",
+                  "https://raw.githubusercontent.com/MaiorDomus/swatch/master/assets/swatch.png",
                 ),
                 body: _DashboardView(),
                 backgroundColor: Colors.blueGrey[700]!,
@@ -78,7 +79,10 @@ class _DashboardViewState extends State<_DashboardView> {
             return LayoutGrid(
               columnSizes: List.generate(columnCount, (index) => 1.fr),
               rowSizes: List.generate(columnCount, (index) => auto),
-              children: _getCameras(config.data!),
+              children: [
+                ..._getCameras(config.data!),
+                ..._getAudioMonitors(config.data!),
+              ],
             );
           } else {
             return Container();
@@ -92,5 +96,12 @@ class _DashboardViewState extends State<_DashboardView> {
     final keys = config.cameras.keys.toList();
     return List.generate(config.cameras.length,
         (index) => CameraComponent(config.cameras[keys[index]]!));
+  }
+
+  List<Widget> _getAudioMonitors(Config config) {
+    return List.generate(
+      config.audioMonitors.length,
+      (index) => AudioMonitorComponent(config.audioMonitors[index]),
+    );
   }
 }
