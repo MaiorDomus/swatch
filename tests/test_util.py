@@ -3,10 +3,11 @@
 import string
 import unittest
 
+import cv2
 import numpy as np
 
 from swatch.config import ColorVariantConfig, ObjectConfig
-from swatch.util import detect_objects, get_random_suffix, mask_image
+from swatch.util import compute_solidity, detect_objects, get_random_suffix, mask_image
 
 
 class TestMaskImage(unittest.TestCase):
@@ -46,6 +47,37 @@ class TestMaskImage(unittest.TestCase):
         assert matches == 0
 
 
+def _first_contour(mask: np.ndarray):
+    """Extract the first external contour from a mask, for solidity tests."""
+    gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 1, 255, 0)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return contours[0]
+
+
+class TestComputeSolidity(unittest.TestCase):
+    """Testing compute_solidity: how convex/smooth a shape is, used to tell
+    a real light fixture apart from a similarly-sized-and-shaped but
+    irregular false positive (e.g. a reflection)."""
+
+    def test_filled_rectangle_is_fully_solid(self) -> None:
+        mask = np.zeros((20, 20, 3), dtype="uint8")
+        mask[2:6, 2:12] = (255, 255, 255)
+
+        assert compute_solidity(_first_contour(mask)) == 1.0
+
+    def test_jagged_shape_has_low_solidity(self) -> None:
+        """An "E" shape: its bounding box/convex hull is mostly empty space
+        between the three arms, unlike a filled blob."""
+        mask = np.zeros((20, 20, 3), dtype="uint8")
+        mask[2:16, 2:4] = (255, 255, 255)  # spine
+        mask[2:4, 2:16] = (255, 255, 255)  # top arm
+        mask[8:10, 2:12] = (255, 255, 255)  # middle arm
+        mask[14:16, 2:16] = (255, 255, 255)  # bottom arm
+
+        assert compute_solidity(_first_contour(mask)) < 0.5
+
+
 class TestDetectObjects(unittest.TestCase):
     """Testing detect_objects bounding box filtering."""
 
@@ -61,6 +93,27 @@ class TestDetectObjects(unittest.TestCase):
         assert len(detected) == 1
         assert detected[0]["area"] == 40
         assert detected[0]["box"] == [2, 2, 12, 6]
+        assert detected[0]["solidity"] == 1.0
+
+    def test_detect_objects_filters_out_blob_below_min_solidity(self) -> None:
+        """A jagged "E" shape should be rejected by a high min_solidity even
+        though its bounding box area/ratio would otherwise pass -- this is
+        what tells a real fixture apart from a similarly-shaped-and-sized
+        but irregular false positive elsewhere in the frame."""
+        jagged_mask = np.zeros((20, 20, 3), dtype="uint8")
+        jagged_mask[2:16, 2:4] = (255, 255, 255)
+        jagged_mask[2:4, 2:16] = (255, 255, 255)
+        jagged_mask[8:10, 2:12] = (255, 255, 255)
+        jagged_mask[14:16, 2:16] = (255, 255, 255)
+
+        obj = ObjectConfig(min_area=0, max_area=1000, min_solidity=0.9)
+        assert detect_objects(jagged_mask, obj) == []
+
+    def test_detect_objects_min_solidity_allows_smooth_blob_through(self) -> None:
+        obj = ObjectConfig(min_area=10, max_area=100, min_solidity=0.9)
+        detected = detect_objects(self.mask, obj)
+
+        assert len(detected) == 1
 
     def test_detect_objects_filters_out_blob_below_min_area(self) -> None:
         obj = ObjectConfig(min_area=1000, max_area=2000)

@@ -39,6 +39,15 @@ objects:
     min_ratio: 0
      # OPTIONAL: the max ratio of width/height of bounding box for valid object detection (default: shown below).
     max_ratio: 24000000
+    # OPTIONAL: the min solidity (matched area / convex hull area, 0-1) for valid object
+    # detection (default: shown below). A smooth, filled shape like an oval light sits
+    # close to 1.0; an irregular/jagged shape (e.g. a diffuse reflection) is lower. Useful
+    # for telling a real fixture apart from a similarly-sized-and-shaped false positive
+    # elsewhere in the zone that area/ratio alone can't distinguish.
+    min_solidity: 0
+    # OPTIONAL: the max solidity (matched area / convex hull area, 0-1) for valid object
+    # detection (default: shown below).
+    max_solidity: 1.1
 ```
 
 ### `cameras`

@@ -78,6 +78,20 @@ class ObjectConfig(SwatchBaseModel):
     max_ratio: float = Field(
         title="Max ratio of width/height for valid detection.", default=24000000
     )
+    min_solidity: float = Field(
+        title=(
+            "Min solidity (matched area / convex hull area, 0-1) for valid "
+            "detection. A smooth, convex shape like an oval light sits close "
+            "to 1.0; an irregular/jagged shape (e.g. a diffuse reflection) is "
+            "lower. Useful for telling a real fixture apart from a "
+            "similarly-sized-and-shaped false positive elsewhere in the zone."
+        ),
+        default=0,
+    )
+    max_solidity: float = Field(
+        title="Max solidity (matched area / convex hull area, 0-1) for valid detection.",
+        default=1.1,
+    )
 
 
 class ZoneConfig(SwatchBaseModel):

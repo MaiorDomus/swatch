@@ -37,6 +37,23 @@ def mask_image(crop: Any, color_variant: ColorVariantConfig) -> tuple[Any, int]:
     return (output, matches)
 
 
+def compute_solidity(contour: Any) -> float:
+    """How convex/smooth a contour's outline is: matched contour area over
+    its convex hull area, in [0, 1]. A clean, filled oval or circular shape
+    sits close to 1.0; an irregular or jagged blob (e.g. a diffuse
+    reflection spread unevenly across a surface) is lower. This lets a real
+    fixture's shape be told apart from a similarly-sized-and-shaped false
+    positive elsewhere in the zone, which a bounding-box area/ratio check
+    alone can't distinguish."""
+    contour_area = cv2.contourArea(contour)
+    hull_area = cv2.contourArea(cv2.convexHull(contour))
+
+    if hull_area == 0:
+        return 0.0
+
+    return float(contour_area / hull_area)
+
+
 def detect_objects(mask: Any, obj: ObjectConfig) -> list[dict[str, Any]]:
     """Detect objects and return list of bounding boxes."""
     # get gray image
@@ -54,13 +71,17 @@ def detect_objects(mask: Any, obj: ObjectConfig) -> list[dict[str, Any]]:
 
         if obj.min_area < area < obj.max_area:
             if obj.min_ratio < (w / h) < obj.max_ratio:
-                detected.append(
-                    {
-                        "box": [x, y, x + w, y + h],
-                        "area": area,
-                        "ratio": (w / h),
-                    }
-                )
+                solidity = compute_solidity(contour)
+
+                if obj.min_solidity < solidity < obj.max_solidity:
+                    detected.append(
+                        {
+                            "box": [x, y, x + w, y + h],
+                            "area": area,
+                            "ratio": (w / h),
+                            "solidity": solidity,
+                        }
+                    )
 
     return detected
 
