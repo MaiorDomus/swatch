@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:swatch/api/api.dart';
+import 'package:swatch/components/component_detection_status.dart';
 import 'package:swatch/ext/extension_string.dart';
 import 'package:swatch/models/camera.dart';
 import 'package:swatch/models/zone.dart';
@@ -43,6 +44,19 @@ class ZoneComponent extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 14,
               ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8.0, 0, 8.0, 8.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: zone.objects
+                  .map((objectName) => Padding(
+                        padding: const EdgeInsets.only(top: 2.0),
+                        child: DetectionStatusIndicator(objectName),
+                      ))
+                  .toList(),
             ),
           ),
         ],

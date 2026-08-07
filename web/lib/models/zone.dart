@@ -6,6 +6,6 @@ class Zone {
 
   Zone(final Map<String, dynamic> json) {
     coordinates = json["coordinates"];
-    //objects = json["objects"];
+    objects = List<String>.from(json["objects"]);
   }
 }

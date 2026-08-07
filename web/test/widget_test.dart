@@ -62,4 +62,11 @@ void main() {
     assert(swatchConfig.audioMonitors.length == 1);
     assert(swatchConfig.audioMonitors.first == "kitchen_hood");
   });
+
+  test("Zone objects are parsed as a list of names", () {
+    final swatchConfig = Config(config);
+    final zone = swatchConfig.cameras["test_cam"]!.zones["test_zone"]!;
+    assert(zone.objects.length == 1);
+    assert(zone.objects.first == "test_obj");
+  });
 }
