@@ -9,9 +9,12 @@ COPY requirements_dev.txt /requirements_dev.txt
 ENV OPENCV_VERSION="4.5.1"
 ENV FLASK_ENV=development
 
-# ffmpeg is used to pull audio from camera RTSP streams for audio_monitors
+# ffmpeg is used to pull audio from camera RTSP streams for audio_monitors.
+# libpcre3 provides libpcre.so.3, which the nginx binary from the
+# crzynik/swatch-nginx image below was linked against, but modern Debian
+# (this base image) ships PCRE2 by default, not the legacy PCRE1 library.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg libpcre3 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install -r requirements.txt
