@@ -11,6 +11,7 @@ from peewee import SqliteDatabase
 from peewee_migrate import Router
 from playhouse.sqliteq import SqliteQueueDatabase
 
+from swatch.audio import AudioMonitor
 from swatch.config import SwatchConfig
 from swatch.const import CONST_CONFIG_FILE, CONST_DB_FILE, ENV_CONFIG, ENV_DB
 from swatch.http import create_app
@@ -43,6 +44,7 @@ class SwatchApp:
         self.__init_processing__()
         self.__init_snapshot_cleanup__()
         self.__init_detection_cleanup__()
+        self.__init_audio_monitors__()
         self.__init_web_server__()
         self.processes_started = True
 
@@ -105,10 +107,21 @@ class SwatchApp:
         self.detection_cleanup = DetectionCleanup(self.config, self.stop_event)
         self.detection_cleanup.start()
 
+    def __init_audio_monitors__(self) -> None:
+        """Init the SwatchApp audio monitor threads."""
+        self.audio_monitors: dict[str, AudioMonitor] = {}
+
+        for name, monitor_config in self.config.audio_monitors.items():
+            self.audio_monitors[name] = AudioMonitor(monitor_config, self.stop_event)
+            self.audio_monitors[name].start()
+
     def __init_web_server__(self) -> None:
         """Init the SwatchApp web server."""
         self.http = create_app(
-            self.config, self.image_processor, self.snapshot_processor
+            self.config,
+            self.image_processor,
+            self.snapshot_processor,
+            self.audio_monitors,
         )
 
     def start(self) -> None:
@@ -138,6 +151,9 @@ class SwatchApp:
 
         for camera_process in self.camera_processes.values():
             camera_process.join()
+
+        for audio_monitor in self.audio_monitors.values():
+            audio_monitor.join()
 
         # stop the db
         self.db.stop()

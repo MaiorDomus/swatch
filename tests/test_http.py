@@ -3,6 +3,7 @@
 import io
 import json
 import unittest
+from unittest.mock import Mock
 
 from peewee import SqliteDatabase
 from PIL import Image
@@ -193,6 +194,46 @@ class TestHttpApi(unittest.TestCase):
         assert body == {
             "success": False,
             "message": "does-not-exist is not a valid camera.",
+        }
+
+
+class TestHttpApiAudioMonitors(unittest.TestCase):
+    """Testing that audio monitor state is exposed via the same /<label>/latest
+    and /all/latest endpoints the Home Assistant integration already polls."""
+
+    def setUp(self) -> None:
+        config = SwatchConfig(objects={}, cameras={}).runtime_config
+        snapshot_processor = SnapshotProcessor(config)
+        image_processor = ImageProcessor(config, snapshot_processor)
+        image_processor.latest_results = {"person": {"result": True, "area": 100}}
+
+        self.audio_monitor = Mock(is_on=False)
+        app = create_app(
+            config,
+            image_processor,
+            snapshot_processor,
+            audio_monitors={"kitchen_hood": self.audio_monitor},
+        )
+        app.testing = True
+        self.client = app.test_client()
+
+    def test_audio_monitor_latest_when_off(self) -> None:
+        resp = self.client.get("/kitchen_hood/latest")
+        assert resp.status_code == 200
+        assert json.loads(resp.data) == {"result": False}
+
+    def test_audio_monitor_latest_when_on(self) -> None:
+        self.audio_monitor.is_on = True
+        resp = self.client.get("/kitchen_hood/latest")
+        assert json.loads(resp.data) == {"result": True}
+
+    def test_all_latest_merges_image_and_audio_results(self) -> None:
+        self.audio_monitor.is_on = True
+        resp = self.client.get("/all/latest")
+        assert resp.status_code == 200
+        assert json.loads(resp.data) == {
+            "person": {"result": True, "area": 100},
+            "kitchen_hood": {"result": True},
         }
 
 

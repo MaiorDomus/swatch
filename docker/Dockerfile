@@ -9,6 +9,11 @@ COPY requirements_dev.txt /requirements_dev.txt
 ENV OPENCV_VERSION="4.5.1"
 ENV FLASK_ENV=development
 
+# ffmpeg is used to pull audio from camera RTSP streams for audio_monitors
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install -r requirements.txt
 
 COPY --from=nginx /usr/local/nginx/ /usr/local/nginx/

@@ -104,11 +104,51 @@ class CameraConfig(SwatchBaseModel):
     )
 
 
+class AudioMonitorConfig(SwatchBaseModel):
+    """Configuration for detecting a sustained mechanical noise (e.g. a kitchen
+    hood fan) from a camera's audio stream."""
+
+    name: str | None = Field(
+        title="Audio monitor name.", pattern="^[a-zA-Z0-9_-]+$", default=None
+    )
+    rtsp_url: str = Field(title="RTSP url to pull audio from.")
+    sample_rate: int = Field(title="Sample rate to decode audio at, in Hz.", default=16000)
+    window_seconds: float = Field(
+        title="Length of each analysis window, in seconds.", default=1.0
+    )
+    threshold_db: float = Field(
+        title=(
+            "Minimum RMS loudness (in dBFS, where 0 is full digital scale and "
+            "quieter sounds are more negative) for a window to be considered loud."
+        ),
+        default=-35.0,
+    )
+    max_spectral_flux: float = Field(
+        title=(
+            "Maximum spectral flux (0-1ish, how much the frequency shape changes "
+            "between windows) for a window to be considered steady, mechanical "
+            "noise rather than speech or music."
+        ),
+        default=0.15,
+    )
+    min_on_seconds: float = Field(
+        title="How long loud + steady audio must be sustained before switching on.",
+        default=5.0,
+    )
+    min_off_seconds: float = Field(
+        title="How long quiet or unsteady audio must be sustained before switching off.",
+        default=10.0,
+    )
+
+
 class SwatchConfig(SwatchBaseModel):
     """Main configuration for SwatchApp."""
 
     objects: dict[str, ObjectConfig] = Field(title="Object configuration.")
     cameras: dict[str, CameraConfig] = Field(title="Camera configuration.")
+    audio_monitors: dict[str, AudioMonitorConfig] = Field(
+        title="Audio monitors.", default_factory=dict
+    )
 
     @property
     def runtime_config(self) -> SwatchConfig:
@@ -122,6 +162,14 @@ class SwatchConfig(SwatchBaseModel):
             )
 
             config.cameras[name] = camera_config
+
+        for name, monitor in config.audio_monitors.items():
+            monitor_dict = monitor.model_dump(exclude_unset=True)
+            monitor_config: AudioMonitorConfig = AudioMonitorConfig.model_validate(
+                {"name": name, **monitor_dict}
+            )
+
+            config.audio_monitors[name] = monitor_config
 
         return config
 

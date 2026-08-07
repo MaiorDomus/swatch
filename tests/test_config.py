@@ -4,7 +4,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from swatch.config import CameraConfig, SnapshotConfig, SwatchConfig
+from swatch.config import AudioMonitorConfig, CameraConfig, SnapshotConfig, SwatchConfig
 
 
 class TestConfig(unittest.TestCase):
@@ -117,3 +117,39 @@ class TestConfig(unittest.TestCase):
         swatch_config = SwatchConfig(**self.minimal)
         swatch_config.runtime_config
         assert swatch_config.cameras["test_cam"].name is None
+
+    def test_audio_monitors_default_to_empty(self) -> None:
+        """Existing configs without audio_monitors should still parse fine."""
+        swatch_config = SwatchConfig(**self.minimal)
+        assert swatch_config.audio_monitors == {}
+
+    def test_audio_monitor_requires_rtsp_url(self) -> None:
+        with self.assertRaises(ValidationError):
+            AudioMonitorConfig()
+
+    def test_runtime_config_assigns_audio_monitor_name_from_key(self) -> None:
+        config_dict = {
+            **self.minimal,
+            "audio_monitors": {
+                "kitchen_hood": {"rtsp_url": "rtsps://192.168.1.1:7441/abc"},
+            },
+        }
+        swatch_config = SwatchConfig(**config_dict).runtime_config
+        assert swatch_config.audio_monitors["kitchen_hood"].name == "kitchen_hood"
+
+    def test_runtime_config_preserves_audio_monitor_settings(self) -> None:
+        config_dict = {
+            **self.minimal,
+            "audio_monitors": {
+                "kitchen_hood": {
+                    "rtsp_url": "rtsps://192.168.1.1:7441/abc",
+                    "threshold_db": -20.0,
+                    "min_on_seconds": 3.0,
+                },
+            },
+        }
+        swatch_config = SwatchConfig(**config_dict).runtime_config
+        monitor = swatch_config.audio_monitors["kitchen_hood"]
+        assert monitor.rtsp_url == "rtsps://192.168.1.1:7441/abc"
+        assert monitor.threshold_db == -20.0
+        assert monitor.min_on_seconds == 3.0

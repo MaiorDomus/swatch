@@ -20,6 +20,7 @@ from flask import (
 from peewee import DoesNotExist, operator
 from playhouse.shortcuts import model_to_dict
 
+from swatch.audio import AudioMonitor
 from swatch.config import CameraConfig, ColorVariantConfig, SwatchConfig, ZoneConfig
 from swatch.image import ImageProcessor
 from swatch.models import Detection
@@ -35,6 +36,7 @@ def create_app(
     swatch_config: SwatchConfig,
     image_processor: ImageProcessor,
     snapshot_processor: SnapshotProcessor,
+    audio_monitors: dict[str, AudioMonitor] | None = None,
 ) -> Flask:
     """Creates the Flask app to run the webserver."""
     app = Flask(__name__)
@@ -43,6 +45,7 @@ def create_app(
     app.swatch_config = swatch_config
     app.image_processor = image_processor
     app.snapshot_processor = snapshot_processor
+    app.audio_monitors = audio_monitors or {}
     return app
 
 
@@ -322,11 +325,28 @@ def detect_camera_frame(camera_name: str) -> Any:
 
 @bp.route("/<label>/latest", methods=["GET"])
 def get_latest_result(label: str) -> Any:
-    """Get the latest results for a label"""
+    """Get the latest results for a label.
+
+    Audio monitor state shares this namespace with image-detected object
+    results, so a single "all" poll (used by the Home Assistant integration's
+    update coordinator) picks up both without an extra request.
+    """
     if not label:
         return make_response(
             jsonify({"success": False, "message": "Label needs to be provided"}), 404
         )
+
+    audio_results = {
+        name: {"result": monitor.is_on}
+        for name, monitor in current_app.audio_monitors.items()
+    }
+
+    if label == "all":
+        combined = {**current_app.image_processor.latest_results, **audio_results}
+        return make_response(jsonify(combined), 200)
+
+    if label in audio_results:
+        return make_response(jsonify(audio_results[label]), 200)
 
     return current_app.image_processor.get_latest_result(label)
 
