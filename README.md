@@ -1,15 +1,15 @@
 <!-- markdownlint-disable first-line-heading -->
 <!-- markdownlint-disable no-inline-html -->
 
-<img src="https://raw.githubusercontent.com/NickM-27/swatch/master/assets/swatch.png"
+<img src="https://raw.githubusercontent.com/MaiorDomus/swatch/master/assets/swatch.png"
      alt="Swatch icon"
      width="16%"
      align="right"
      style="float: right; margin: 10px 0px 20px 20px;" />
 
-[![GitHub Release](https://img.shields.io/github/release/NickM-27/swatch.svg?style=flat-square)](https://github.com/NickM-27/swatch/releases)
-[![Build Status](https://img.shields.io/github/workflow/status/NickM-27/swatch/Build?style=flat-square)](https://github.com/NickM-27/swatch/actions/workflows/build.yaml)
-[![License](https://img.shields.io/github/license/NickM-27/swatch.svg?style=flat-square)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/release/MaiorDomus/swatch.svg?style=flat-square)](https://github.com/MaiorDomus/swatch/releases)
+[![Build Status](https://img.shields.io/github/workflow/status/MaiorDomus/swatch/Build?style=flat-square)](https://github.com/MaiorDomus/swatch/actions/workflows/build.yaml)
+[![License](https://img.shields.io/github/license/MaiorDomus/swatch.svg?style=flat-square)](LICENSE)
 
 # swatch
 
@@ -29,14 +29,14 @@ In this example you can see a cropped section of the street with a trash can. Th
 
 - REST API to be invoked by other applications
 - Intuitive frontend UI to manage swatch and use the **Color Playground** to fine tune colors for the config.
-- [HomeAssistant Integration](https://github.com/NickM-27/swatch-hass-integration)
-- [HomeAssistant Addon](https://github.com/NickM-27/swatch-hass-addon)
+- [HomeAssistant Integration](https://github.com/MaiorDomus/swatch-hass-integration)
+- [HomeAssistant Addon](https://github.com/MaiorDomus/swatch-hass-addon)
 
 ## Web UI
 
 ### Color Playground
 
-<img src="https://raw.githubusercontent.com/NickM-27/swatch/master/assets/color-playground.png"
+<img src="https://raw.githubusercontent.com/MaiorDomus/swatch/master/assets/color-playground.png"
      alt="Swatch Color Playground" />
 
 ## Configuration
@@ -61,4 +61,4 @@ For instructions on how to get started, see the [contributing section](CONTRIBUT
 
 ### Donations
 
-If you would like to make a donation to support development, please use [GitHub Sponsors](https://github.com/sponsors/NickM-27).
+If you would like to make a donation to support development, please use [GitHub Sponsors](https://github.com/sponsors/MaiorDomus).
