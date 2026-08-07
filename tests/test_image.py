@@ -48,10 +48,12 @@ class TestImage(unittest.TestCase):
         }
 
     def test_valid_time_range(self) -> None:
+        # Mirrors the skip condition in ImageProcessor.__check_image__: a
+        # variant is valid (not skipped) when after <= now_time <= before.
         swatch_config = SwatchConfig(**self.config)
         now_time = "12:00"
         color_variant = swatch_config.objects["test_obj"].color_variants["default"]
-        assert (
+        assert not (
             now_time < color_variant.time_range.after
             or now_time > color_variant.time_range.before
         )
@@ -60,7 +62,7 @@ class TestImage(unittest.TestCase):
         swatch_config = SwatchConfig(**self.config)
         now_time = "04:00"
         color_variant = swatch_config.objects["test_obj"].color_variants["default"]
-        assert not (
+        assert (
             now_time < color_variant.time_range.after
             or now_time > color_variant.time_range.before
         )
