@@ -125,7 +125,7 @@ class AudioMonitorConfig(SwatchBaseModel):
             "A camera mic picking up an appliance from across a room tends to run "
             "quieter than you'd expect -- tune this against your own footage."
         ),
-        default=-50.0,
+        default=-60.0,
     )
     max_spectral_flux: float = Field(
         title=(
