@@ -67,7 +67,7 @@ cameras:
         # OPTIONAL: Variations of snapshots to keep. Options are all, mask, crop (Default: shown below).
         mode: "all"
         # OPTIONAL: Number of days of snapshots to keep (Default: shown below).
-        retain_days: 7
+        retain_days: 1
     # REQUIRED: Zones are cropped areas where the object can be expected to be.
     # This makes searching / matches for efficient and more predictable than searching
     # the entire image.

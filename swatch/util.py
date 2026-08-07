@@ -2,7 +2,7 @@
 
 import random
 import string
-from typing import Any, Dict, Set, Tuple
+from typing import Any
 
 from colorthief import ColorThief
 import cv2
@@ -10,11 +10,10 @@ import numpy as np
 
 from swatch.config import ColorVariantConfig, ObjectConfig
 
-
 ### Image utils
 
 
-def mask_image(crop: Any, color_variant: ColorVariantConfig) -> Tuple[Any, int]:
+def mask_image(crop: Any, color_variant: ColorVariantConfig) -> tuple[Any, int]:
     """Mask an image with color values"""
     color_lower = (
         [1, 1, 1]
@@ -38,7 +37,7 @@ def mask_image(crop: Any, color_variant: ColorVariantConfig) -> Tuple[Any, int]:
     return (output, matches)
 
 
-def detect_objects(mask: Any, obj: ObjectConfig) -> Set[Dict[str, Any]]:
+def detect_objects(mask: Any, obj: ObjectConfig) -> set[dict[str, Any]]:
     """Detect objects and return list of bounding boxes."""
     # get gray image
     gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)

@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 from enum import Enum
-from pydantic import BaseModel, Extra, Field
+from pydantic import BaseModel, ConfigDict, Field
 import yaml
 
 
 class SwatchBaseModel(BaseModel):
     """Base config that sets rules."""
 
-    class Config:
-        """Set config parameters"""
-
-        extra = Extra.forbid
+    model_config = ConfigDict(extra="forbid")
 
 
 class SnapshotModeEnum(str, Enum):
@@ -41,7 +38,7 @@ class SnapshotConfig(SwatchBaseModel):
     save_misses: bool = Field(
         title="Save snapshots of missed detections.", default=False
     )
-    retain_days: int = Field(title="Number of days to retain snapshots.", default=7)
+    retain_days: int = Field(title="Number of days to retain snapshots.", default=1)
 
 
 class TimeRangeConfig(SwatchBaseModel):
@@ -96,7 +93,9 @@ class CameraConfig(SwatchBaseModel):
     auto_detect: int = Field(
         title="Frequency to automatically run detection.", default=0
     )
-    name: str | None = Field(title="Camera name.", regex="^[a-zA-Z0-9_-]+$")
+    name: str | None = Field(
+        title="Camera name.", pattern="^[a-zA-Z0-9_-]+$", default=None
+    )
     snapshot_config: SnapshotConfig = Field(
         title="Snapshot config for this zone.", default_factory=SnapshotConfig
     )
@@ -114,11 +113,11 @@ class SwatchConfig(SwatchBaseModel):
     @property
     def runtime_config(self) -> SwatchConfig:
         """Merge camera config with globals."""
-        config = self.copy(deep=True)
+        config = self.model_copy(deep=True)
 
         for name, camera in config.cameras.items():
-            camera_dict = camera.dict(exclude_unset=True)
-            camera_config: CameraConfig = CameraConfig.parse_obj(
+            camera_dict = camera.model_dump(exclude_unset=True)
+            camera_config: CameraConfig = CameraConfig.model_validate(
                 {"name": name, **camera_dict}
             )
 
@@ -133,4 +132,4 @@ class SwatchConfig(SwatchBaseModel):
             raw_config = f.read()
 
         config = yaml.safe_load(raw_config)
-        return cls.parse_obj(config)
+        return cls.model_validate(config)

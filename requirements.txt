@@ -1,12 +1,11 @@
 colorthief
-Flask == 2.1.*
-matplotlib == 3.5.*
-mypy == 0.991
-numpy == 1.22.*
+Flask == 3.1.*
+mypy == 2.3.0
+numpy == 2.5.*
 opencv-python-headless
-peewee == 3.14.*
-peewee_migrate == 1.4.*
+peewee == 4.3.*
+peewee_migrate == 1.15.*
 pillow
-pydantic == 1.9.*
+pydantic == 2.13.*
 PyYAML == 6.0.*
-requests == 2.27.*
+requests == 2.34.*

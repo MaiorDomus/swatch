@@ -1,8 +1,9 @@
 """Main http service that handles starting app modules."""
 
 from functools import reduce
+import json
 import logging
-from typing import Any, Dict
+from typing import Any
 
 import cv2
 import numpy as np
@@ -24,7 +25,6 @@ from swatch.image import ImageProcessor
 from swatch.models import Detection
 from swatch.snapshot import SnapshotProcessor
 from swatch.util import mask_image, parse_colors_from_image
-
 
 logger = logging.getLogger(__name__)
 flask_logger = logging.getLogger("werkzeug")
@@ -61,7 +61,7 @@ def status() -> str:
 @bp.route("/config", methods=["GET"])
 def get_config() -> Any:
     """Get current config."""
-    return make_response(jsonify(current_app.swatch_config.dict()), 200)
+    return make_response(jsonify(current_app.swatch_config.model_dump()), 200)
 
 
 @bp.route("/config/schema", methods=["GET"])
@@ -69,7 +69,8 @@ def get_config_schema() -> Any:
     """Get schema for the swatch config.
     Which is useful for vscode or other code completion."""
     return current_app.response_class(
-        current_app.swatch_config.schema_json(), mimetype="application/json"
+        json.dumps(current_app.swatch_config.model_json_schema()),
+        mimetype="application/json",
     )
 
 
@@ -127,7 +128,7 @@ def test_mask() -> Any:
     color_lower = request.form.get("color_lower")
     color_upper = request.form.get("color_upper")
 
-    img = cv2.imdecode(np.fromstring(image_str, np.uint8), -1)
+    img = cv2.imdecode(np.frombuffer(image_str, np.uint8), -1)
     test_color_variant = ColorVariantConfig(
         color_lower=color_lower, color_upper=color_upper
     )
@@ -276,7 +277,7 @@ def detect_camera_frame(camera_name: str) -> Any:
 
     if image_url:
         try:
-            result: Dict[str, Any] = current_app.image_processor.detect(
+            result: dict[str, Any] = current_app.image_processor.detect(
                 camera_name, image_url
             )
         except Exception as _e:

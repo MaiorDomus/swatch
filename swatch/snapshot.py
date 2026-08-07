@@ -7,7 +7,7 @@ import os
 import requests
 import shutil
 import threading
-from typing import Any, Set
+from typing import Any
 
 import cv2
 import numpy as np
@@ -16,7 +16,6 @@ from numpy import ndarray
 from swatch.config import SwatchConfig, CameraConfig
 from swatch.const import CONST_MEDIA_DIR
 from swatch.models import Detection
-
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +95,7 @@ class SnapshotProcessor:
         camera_name: str,
         zone_name: str,
         detection_id: str,
-        bounding_box: Set[int],
+        bounding_box: set[int],
     ) -> bool:
         """Saves the file snapshot for a detection to the correct snapshot dir."""
         time = datetime.datetime.now()
@@ -278,11 +277,13 @@ class SnapshotCleanup(threading.Thread):
         """Run snapshot cleanup"""
         logger.info("Starting snapshot cleanup")
 
-        # try to run once a day
-        while not self.stop_event.wait(86400):
-
+        # run once immediately on startup, then once a day after that
+        while True:
             for _, cam_config in self.config.cameras.items():
                 if cam_config.snapshot_config.retain_days > 0:
                     self.cleanup_snapshots(cam_config)
+
+            if self.stop_event.wait(86400):
+                break
 
         logger.info("Stopping Snapshot Cleanup")

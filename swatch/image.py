@@ -2,7 +2,7 @@
 
 import datetime
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 import cv2
 import numpy as np
 
@@ -11,7 +11,6 @@ import requests
 from swatch.util import detect_objects, mask_image
 from swatch.config import ObjectConfig, SnapshotModeEnum, SwatchConfig
 from swatch.snapshot import SnapshotProcessor
-
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ class ImageProcessor:
         """Create Image Processor"""
         self.config: SwatchConfig = config
         self.snapshot_processor: SnapshotProcessor = snapshot_processor
-        self.latest_results: Dict[str, Any] = {}
+        self.latest_results: dict[str, Any] = {}
 
     def __check_image__(
         self,
@@ -35,10 +34,10 @@ class ImageProcessor:
         camera_name: str,
         file_name: str,
         obj_config: ObjectConfig,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Check specific image for known color values."""
         snapshot_config = self.config.cameras[camera_name].snapshot_config
-        best_fail: Dict[str, Any] = {}
+        best_fail: dict[str, Any] = {}
 
         for variant_name, color_variant in obj_config.color_variants.items():
             now_time = datetime.datetime.now().strftime("%H:%M")
@@ -111,9 +110,9 @@ class ImageProcessor:
 
         return best_fail
 
-    def detect(self, camera_name: str, image_url: str) -> Dict[str, Any]:
+    def detect(self, camera_name: str, image_url: str) -> dict[str, Any]:
         """Use the default image or $image_url to detect known objects."""
-        response: Dict[str, Any] = {}
+        response: dict[str, Any] = {}
 
         camera_config = self.config.cameras[camera_name]
 
@@ -161,12 +160,12 @@ class ImageProcessor:
 
         return response
 
-    def get_latest_result(self, label: str) -> Dict[str, Any]:
+    def get_latest_result(self, label: str) -> dict[str, Any]:
         """Return latest results for label."""
         if label == "all":
             return self.latest_results
 
-        latest_result: Optional[Dict[str, Any]] = self.latest_results.get(label)
+        latest_result: dict[str, Any] | None = self.latest_results.get(label)
 
         if latest_result:
             return latest_result

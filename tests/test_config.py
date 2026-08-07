@@ -76,8 +76,8 @@ class TestConfig(unittest.TestCase):
 
     def test_minimal_config_class(self) -> None:
         swatch_config = SwatchConfig(**self.minimal)
-        assert self.minimal == swatch_config.dict(exclude_unset=True)
+        assert self.minimal == swatch_config.model_dump(exclude_unset=True)
 
     def test_full_config_class(self) -> None:
         swatch_config = SwatchConfig(**self.full)
-        assert self.full == swatch_config.dict(exclude_unset=True)
+        assert self.full == swatch_config.model_dump(exclude_unset=True)

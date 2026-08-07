@@ -4,14 +4,13 @@ import datetime
 import logging
 import multiprocessing
 import threading
-from typing import Any, Dict
+from typing import Any
 
 from swatch.config import CameraConfig, SwatchConfig
 from swatch.image import ImageProcessor
 from swatch.models import Detection
 from swatch.snapshot import SnapshotProcessor
 from swatch.util import get_random_suffix
-
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,7 @@ class AutoDetector(threading.Thread):
         self.snap_processor = snap_processor
         self.config = camera_config
         self.stop_event = stop_event
-        self.obj_data: Dict[str, Any] = {}
+        self.obj_data: dict[str, Any] = {}
 
     def __handle_db__(self, db_type: str, obj_id: str) -> None:
         """Handle the db transactions for detection."""
@@ -59,7 +58,7 @@ class AutoDetector(threading.Thread):
                 end_time=now,
             ).where(Detection.id == self.obj_data[obj_id]["id"]).execute()
 
-    def __handle_detections__(self, detection_result: Dict[str, Any]) -> None:
+    def __handle_detections__(self, detection_result: dict[str, Any]) -> None:
         """Run through map of detections for camera and add to the db."""
         cam_name = self.config.name
 
@@ -119,7 +118,7 @@ class AutoDetector(threading.Thread):
         logger.info("Starting Auto Detection for %s", self.config.name)
 
         while not self.stop_event.wait(self.config.auto_detect):
-            result: Dict[str, Any] = self.image_processor.detect(
+            result: dict[str, Any] = self.image_processor.detect(
                 self.config.name, self.config.snapshot_config.url
             )
             self.__handle_detections__(result)

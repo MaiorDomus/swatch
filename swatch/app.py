@@ -1,14 +1,14 @@
 """Main SwatchApp responsible for running the app."""
+
 import logging
 import os
 import multiprocessing
 import signal
 import sys
-from typing import Dict, Optional
 from types import FrameType
 
+from peewee import SqliteDatabase
 from peewee_migrate import Router
-from playhouse.sqlite_ext import SqliteExtDatabase
 from playhouse.sqliteq import SqliteQueueDatabase
 
 from swatch.config import SwatchConfig
@@ -18,7 +18,6 @@ from swatch.image import ImageProcessor
 from swatch.detection import AutoDetector, DetectionCleanup
 from swatch.models import Detection
 from swatch.snapshot import SnapshotCleanup, SnapshotProcessor
-
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,7 @@ class SwatchApp:
             logger.debug("%s doesn't exist, creating...", db_path)
             os.makedirs(db_path)
 
-        swatch_db = SqliteExtDatabase(db_file)
+        swatch_db = SqliteDatabase(db_file)
 
         router = Router(swatch_db)
         router.run()
@@ -85,7 +84,7 @@ class SwatchApp:
         self.snapshot_processor = SnapshotProcessor(self.config)
         self.image_processor = ImageProcessor(self.config, self.snapshot_processor)
 
-        self.camera_processes: Dict[str, AutoDetector] = {}
+        self.camera_processes: dict[str, AutoDetector] = {}
 
         for name, config in self.config.cameras.items():
             if config.auto_detect > 0 and config.snapshot_config.url:
@@ -116,7 +115,7 @@ class SwatchApp:
     def start(self) -> None:
         """Start SwatchApp."""
 
-        def receiveSignal(signalNumber: int, frame: Optional[FrameType]) -> None:
+        def receiveSignal(signalNumber: int, frame: FrameType | None) -> None:
             self.stop()
             sys.exit()
 
