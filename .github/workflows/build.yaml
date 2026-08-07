@@ -7,6 +7,13 @@ on:
       - main
   pull_request:
 
+env:
+  DEFAULT_PYTHON: "3.13"
+  # web/pubspec.yaml pins `sdk: ">=2.17.0 <3.0.0"`, so CI needs an old Flutter/Dart
+  # toolchain -- the latest stable channel now ships Dart 3.x, which fails that
+  # constraint. Matches the pin used in swatch-hass-addon's Dockerfile.
+  FLUTTER_VERSION: "3.3.10"
+
 jobs:
 
   # Python Checks
@@ -45,7 +52,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
             channel: 'stable'
-            flutter-version: '2.5.1'
+            flutter-version: ${{ env.FLUTTER_VERSION }}
       - name: Build
         run: make
       - name: Run tests
@@ -63,6 +70,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
             channel: 'stable'
+            flutter-version: ${{ env.FLUTTER_VERSION }}
 
   web-tests:
     runs-on: ubuntu-latest
@@ -74,6 +82,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
             channel: 'stable'
+            flutter-version: ${{ env.FLUTTER_VERSION }}
       - name: Run test
         working-directory: ./web
         run: flutter test
