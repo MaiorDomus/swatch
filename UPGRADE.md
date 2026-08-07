@@ -49,10 +49,56 @@ Home Assistant 2026.8.0-era dependency versions).
 - Image pipeline smoke test: opencv/numpy/colorthief/Pillow round trip.
 - `pre-commit run --all-files` clean.
 
-Three pre-existing test failures are unrelated to this upgrade (confirmed by not touching
-the code paths involved): `test_db_created` (expects `/config/config.yaml` to exist, which
-it doesn't in a bare checkout) and `test_valid_time_range` / `test_invalid_time_range`
-(pre-existing inverted assertions in `tests/test_image.py`).
+## Test suite
+
+The suite went from 5 tests (2 of them pre-existing broken) to 41, all passing:
+
+- **Fixed the 3 pre-existing broken tests.** `test_valid_time_range`/`test_invalid_time_range`
+  had their `assert`/`assert not` swapped relative to each other — verified against the real
+  skip condition in `ImageProcessor.__check_image__` before fixing, so this locks in actual
+  behavior rather than an assumption. `test_db_created` called `SwatchApp()` before setting
+  `DB_FILE`/`CONFIG_FILE`, so it always hit the missing-config `sys.exit(1)` path instead of
+  exercising `__init_db__`; rewrote it to point at an isolated temp dir and added a
+  `tearDown` that calls `app.stop()` so the background cleanup threads don't leak.
+- **`tests/test_util.py`** (new) — `mask_image`/`detect_objects`, the core color-detection
+  algorithm, had zero prior coverage.
+- **`tests/test_snapshot.py`** (new) — `SnapshotCleanup.cleanup_snapshots` retention logic,
+  covering the `retain_days` default change and the "no snapshots dir yet" crash fix below.
+- **`tests/test_http.py`** (new) — Flask route smoke tests, including regression coverage
+  for the `jsonify` status-code bug below.
+- **`tests/test_config.py`** (extended) — `extra="forbid"` rejection, `runtime_config`
+  camera-name merging, and a regression test locking in `retain_days=1`.
+
+## Bugs found and fixed along the way
+
+Re-enabled mypy for the whole `swatch` package — it had been globally disabled via
+`[mypy-swatch.*] ignore_errors = true` in `mypy.ini`, which is why some of these went
+unnoticed. Fixing everything mypy surfaced turned up genuine bugs, not just annotation gaps:
+
+- **`http.py`** — `jsonify({...}, status_code)` returns a corrupted `[dict, status]` JSON
+  array with a **200** status instead of the intended body + status. This was the pattern in
+  ~15 error-response routes (`/detections/<id>`, `/<camera>/snapshot.jpg`,
+  `/<camera>/detect`, etc.); fixed to `make_response(jsonify({...}), status)`. Also fixed
+  `/colortest/values` returning a *success* body with a hardcoded 404 status.
+- **`snapshot.py`** — `cv2.imdecode()`/`requests.get(url)` results were used without
+  None-checks in several methods; a malformed camera response or an unset snapshot URL would
+  crash instead of failing cleanly. Also a `crop` variable that was only assigned inside an
+  `if img.size > 0:` block but read unconditionally afterward (`UnboundLocalError` risk).
+  `cleanup_snapshots` crashed with `FileNotFoundError` on a fresh install with no snapshots
+  saved yet — more exposed now that cleanup runs immediately on startup rather than 24h
+  later (see below).
+- **`app.py`** — `stop()` crashed with `KeyError` joining `camera_processes` for any camera
+  that never got an `AutoDetector` thread (i.e. `auto_detect=0`); it iterated over all
+  configured cameras instead of the ones actually running. Also removed a dead `return`
+  after `sys.exit(1)`, and renamed `SwatchConfig.parse_file` → `parse_yaml_file` since it
+  collided with pydantic's own deprecated `BaseModel.parse_file` (different signature).
+- **`util.py`/`config.py`** — `detect_objects` and `parse_colors_from_image` were
+  type-hinted with the wrong container types (`set` where the code returns a `list`, `str`
+  where it returns a `tuple`); `SnapshotConfig.url` was declared `str` but defaulted to
+  `None`.
+- **`detection.py`** — `AutoDetector` now asserts and caches `camera_config.name` /
+  `snapshot_config.url` once in `__init__` (both are guaranteed non-`None` by how
+  `SwatchApp` constructs it) instead of re-reading `Optional` fields throughout.
 
 ## Not touched
 
