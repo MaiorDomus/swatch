@@ -94,6 +94,14 @@ frequency content moment to moment (changing phonemes/notes), which is what lets
 them apart. It won't be perfect -- a sustained drone in music could still trigger it -- so
 tune `threshold_db`/`max_spectral_flux` for your environment.
 
+Tested live against a real UniFi G6 Instant with its RTSP audio alias enabled, pointed at
+a running kitchen hood fan: the spectral-steadiness heuristic worked well out of the box
+(flux stayed around 0.02-0.08, well under the 0.15 default), but the hood only measured
+around -50 to -53 dBFS through the camera's mic -- much quieter than a directly-recorded
+sample would suggest. `threshold_db` defaults to -50.0 to account for that, but a mic's
+distance, sensitivity, and any automatic gain control still varies enough between cameras
+that you should expect to tune it against your own setup.
+
 The resulting on/off state shows up alongside object detection results at
 `GET /<name>/latest` and `GET /all/latest`, so it works with the Home Assistant
 integration's existing polling with no extra setup.
@@ -114,7 +122,7 @@ audio_monitors:
     window_seconds: 1.0
     # OPTIONAL: Minimum RMS loudness, in dBFS, for a window to be considered loud
     # (0 is full digital scale, quieter is more negative) (Default: shown below).
-    threshold_db: -35.0
+    threshold_db: -50.0
     # OPTIONAL: Maximum spectral flux (how much the frequency shape changes between
     # windows, roughly 0-1) for a window to be considered steady/mechanical rather than
     # speech or music (Default: shown below).

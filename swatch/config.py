@@ -112,16 +112,20 @@ class AudioMonitorConfig(SwatchBaseModel):
         title="Audio monitor name.", pattern="^[a-zA-Z0-9_-]+$", default=None
     )
     rtsp_url: str = Field(title="RTSP url to pull audio from.")
-    sample_rate: int = Field(title="Sample rate to decode audio at, in Hz.", default=16000)
+    sample_rate: int = Field(
+        title="Sample rate to decode audio at, in Hz.", default=16000
+    )
     window_seconds: float = Field(
         title="Length of each analysis window, in seconds.", default=1.0
     )
     threshold_db: float = Field(
         title=(
             "Minimum RMS loudness (in dBFS, where 0 is full digital scale and "
-            "quieter sounds are more negative) for a window to be considered loud."
+            "quieter sounds are more negative) for a window to be considered loud. "
+            "A camera mic picking up an appliance from across a room tends to run "
+            "quieter than you'd expect -- tune this against your own footage."
         ),
-        default=-35.0,
+        default=-50.0,
     )
     max_spectral_flux: float = Field(
         title=(

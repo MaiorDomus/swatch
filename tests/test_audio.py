@@ -4,6 +4,8 @@ import multiprocessing
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -267,6 +269,25 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
 
     def test_missing_input_does_not_raise(self) -> None:
         assert self._run_to_completion("/nonexistent/path/does-not-exist.wav") is False
+
+    def test_stopping_mid_stream_does_not_log_a_warning(self) -> None:
+        """Regression: ffmpeg exits with code 255 when it catches the
+        SIGTERM from our own terminate() call -- a normal, clean shutdown,
+        not an error worth warning about. This is what happens every time an
+        AudioMonitor is stopped while its source is still live (e.g. a real
+        RTSP stream, or here, a WAV file that hasn't reached EOF yet)."""
+        config = AudioMonitorConfig(name="test", rtsp_url="unused")
+        stop_event = multiprocessing.Event()
+        monitor = AudioMonitor(config, stop_event, input_source=self.fan_noise_wav)
+
+        thread = threading.Thread(target=monitor._process_stream)
+        with self.assertNoLogs("swatch.audio", level="WARNING"):
+            thread.start()
+            time.sleep(2)
+            stop_event.set()
+            thread.join(timeout=10)
+
+        assert not thread.is_alive()
 
 
 if __name__ == "__main__":

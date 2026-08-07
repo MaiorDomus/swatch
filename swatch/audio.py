@@ -162,6 +162,12 @@ class AudioMonitor(threading.Thread):
                 "-timeout",
                 "15000000",  # microseconds; reconnect if the stream stalls
             ]
+        else:
+            # A local file (only used by tests, in place of a real camera) is
+            # otherwise decoded as fast as possible rather than arriving over
+            # time like a live stream does; -re paces it at its native rate
+            # so file-based tests actually exercise the "still running" case.
+            cmd += ["-re"]
 
         cmd += [
             "-i",
@@ -228,7 +234,13 @@ class AudioMonitor(threading.Thread):
             if process.stdout is not None:
                 process.stdout.close()
 
-            if process.returncode not in (0, None, -15):  # -15 == terminated by us
+            # 0/None: exited cleanly on its own (e.g. end of a local file).
+            # -15: killed by our SIGTERM directly (rare -- usually caught, see below).
+            # 255: ffmpeg's own exit code when it catches SIGTERM/SIGINT and shuts
+            # down cleanly, which is what happens every time we call terminate()
+            # above and ffmpeg was still running -- this is the common case, not
+            # an error.
+            if process.returncode not in (0, None, -15, 255):
                 logger.warning(
                     "ffmpeg for audio monitor %s exited with code %s",
                     self.monitor_name,
