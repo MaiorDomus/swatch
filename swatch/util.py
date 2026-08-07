@@ -33,11 +33,11 @@ def mask_image(crop: Any, color_variant: ColorVariantConfig) -> tuple[Any, int]:
 
     mask = cv2.inRange(crop, lower, upper)
     output = cv2.bitwise_and(crop, crop, mask=mask)
-    matches = np.count_nonzero(output)
+    matches = int(np.count_nonzero(output))
     return (output, matches)
 
 
-def detect_objects(mask: Any, obj: ObjectConfig) -> set[dict[str, Any]]:
+def detect_objects(mask: Any, obj: ObjectConfig) -> list[dict[str, Any]]:
     """Detect objects and return list of bounding boxes."""
     # get gray image
     gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
@@ -65,7 +65,9 @@ def detect_objects(mask: Any, obj: ObjectConfig) -> set[dict[str, Any]]:
     return detected
 
 
-def parse_colors_from_image(test_image: Any) -> tuple[str, set[str]]:
+def parse_colors_from_image(
+    test_image: Any,
+) -> tuple[tuple[int, int, int], list[tuple[int, int, int]]]:
     """Convenience fun to get colors from test image."""
     color_thief = ColorThief(test_image)
     main_color = color_thief.get_color(quality=1)
@@ -76,6 +78,6 @@ def parse_colors_from_image(test_image: Any) -> tuple[str, set[str]]:
 ### String utils
 
 
-def get_random_suffix():
+def get_random_suffix() -> str:
     """Returns 6 random character suffix string."""
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=6))

@@ -75,6 +75,18 @@ class TestSnapshotCleanup(unittest.TestCase):
 
         assert self._existing_dirs() == {"08-15", "08-14", "08-13"}
 
+    def test_cleanup_snapshots_no_snapshots_dir_yet(self) -> None:
+        """Regression: a fresh install with no snapshots saved yet must not
+        crash cleanup_snapshots with a FileNotFoundError. This matters more
+        since SnapshotCleanup now runs its first pass immediately on startup
+        instead of 24h later."""
+        shutil.rmtree(f"{self.media_dir}/snapshots")
+
+        camera_config = CameraConfig(name="front")
+        cleanup = SnapshotCleanup(config=None, stop_event=multiprocessing.Event())
+
+        cleanup.cleanup_snapshots(camera_config)  # should not raise
+
     @mock.patch("swatch.snapshot.datetime")
     def test_cleanup_only_removes_matching_camera(self, mock_datetime) -> None:
         """A second camera's snapshots in the same dated dir must survive."""

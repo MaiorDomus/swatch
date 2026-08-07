@@ -80,7 +80,9 @@ def get_config_schema() -> Any:
 @bp.route("/colortest/values", methods=["POST"])
 def test_colors() -> Any:
     """Test and get color values inside of test image."""
-    if not request.files or not request.files.get("test_image"):
+    test_image = request.files.get("test_image") if request.files else None
+
+    if not test_image:
         return make_response(
             jsonify(
                 {"success": False, "message": "An image needs to be sent as test_image"}
@@ -88,7 +90,6 @@ def test_colors() -> Any:
             404,
         )
 
-    test_image = request.files.get("test_image")
     main_color, palette = parse_colors_from_image(test_image)
 
     return make_response(
@@ -98,14 +99,16 @@ def test_colors() -> Any:
                 "message": f"The dominant color is {main_color} with a mixed palette as {palette}",
             }
         ),
-        404,
+        200,
     )
 
 
 @bp.route("/colortest/mask", methods=["POST"])
 def test_mask() -> Any:
     """Test and get masked image for given lower and upper color values."""
-    if not request.files or not request.files.get("test_image"):
+    test_image = request.files.get("test_image") if request.files else None
+
+    if not test_image:
         return make_response(
             jsonify(
                 {"success": False, "message": "An image needs to be sent as test_image"}
@@ -113,7 +116,10 @@ def test_mask() -> Any:
             404,
         )
 
-    if not request.form.get("color_lower") or not request.form.get("color_upper"):
+    color_lower = request.form.get("color_lower")
+    color_upper = request.form.get("color_upper")
+
+    if not color_lower or not color_upper:
         return make_response(
             jsonify(
                 {
@@ -124,9 +130,7 @@ def test_mask() -> Any:
             404,
         )
 
-    image_str = request.files.get("test_image").read()
-    color_lower = request.form.get("color_lower")
-    color_upper = request.form.get("color_upper")
+    image_str = test_image.read()
 
     img = cv2.imdecode(np.frombuffer(image_str, np.uint8), -1)
     test_color_variant = ColorVariantConfig(
@@ -165,8 +169,8 @@ def get_detections() -> Any:
     after = request.args.get("after", type=float)
     before = request.args.get("before", type=float)
 
-    clauses = []
-    excluded_fields = []
+    clauses: list[Any] = []
+    excluded_fields: list[str] = []
 
     selected_columns = [
         Detection.id,
@@ -208,38 +212,44 @@ def get_detections() -> Any:
 
 
 @bp.route("/detections/<detection_id>", methods=["GET"])
-def get_detection(detection_id: str):
+def get_detection(detection_id: str) -> Any:
     """Get specific detection."""
     try:
         return model_to_dict(Detection.get(Detection.id == detection_id))
     except DoesNotExist:
-        return jsonify(
-            {
-                "success": False,
-                "message": f"Detection with id {detection_id} not found.",
-            },
+        return make_response(
+            jsonify(
+                {
+                    "success": False,
+                    "message": f"Detection with id {detection_id} not found.",
+                }
+            ),
             404,
         )
 
 
 @bp.route("/detections/<detection_id>", methods=["DELETE"])
-def delete_detection(detection_id: str):
+def delete_detection(detection_id: str) -> Any:
     """Get specific detection."""
     try:
         Detection.delete().where(Detection.id == detection_id).execute()
-        return jsonify(
-            {
-                "success": True,
-                "message": "Deleted successfully.",
-            },
+        return make_response(
+            jsonify(
+                {
+                    "success": True,
+                    "message": "Deleted successfully.",
+                }
+            ),
             200,
         )
     except DoesNotExist:
-        return jsonify(
-            {
-                "success": False,
-                "message": f"Detection with id {detection_id} not found.",
-            },
+        return make_response(
+            jsonify(
+                {
+                    "success": False,
+                    "message": f"Detection with id {detection_id} not found.",
+                }
+            ),
             404,
         )
 
@@ -315,7 +325,7 @@ def get_latest_result(label: str) -> Any:
     """Get the latest results for a label"""
     if not label:
         return make_response(
-            jsonify({"success": False, "message": "Label needs to be provided"})
+            jsonify({"success": False, "message": "Label needs to be provided"}), 404
         )
 
     return current_app.image_processor.get_latest_result(label)
@@ -327,22 +337,27 @@ def get_latest_result(label: str) -> Any:
 def get_latest_camera_snapshot(camera_name: str) -> Any:
     """Get the latest snapshot for <camera_name>."""
     if not camera_name:
-        return jsonify(
-            {"success": False, "message": "camera_name must be provided."}, 404
+        return make_response(
+            jsonify({"success": False, "message": "camera_name must be provided."}),
+            404,
         )
 
     camera_config = current_app.swatch_config.cameras.get(camera_name)
 
     if not camera_config:
-        return jsonify(
-            {"success": False, "message": f"{camera_name} is not a valid camera."}, 404
+        return make_response(
+            jsonify(
+                {"success": False, "message": f"{camera_name} is not a valid camera."}
+            ),
+            404,
         )
 
     jpg_bytes = current_app.snapshot_processor.get_latest_camera_snapshot(camera_name)
 
     if not jpg_bytes:
-        return jsonify(
-            {"success": False, "message": "Failed to load image from camera."}, 500
+        return make_response(
+            jsonify({"success": False, "message": "Failed to load image from camera."}),
+            500,
         )
 
     response = make_response(jpg_bytes)
@@ -354,30 +369,36 @@ def get_latest_camera_snapshot(camera_name: str) -> Any:
 def get_latest_zone_snapshot(camera_name: str, zone_name: str) -> Any:
     """Get the latest snapshot for <camera_name>."""
     if not camera_name:
-        return jsonify(
-            {"success": False, "message": "camera_name must be provided."}, 404
+        return make_response(
+            jsonify({"success": False, "message": "camera_name must be provided."}),
+            404,
         )
 
     camera_config: CameraConfig() = current_app.swatch_config.cameras.get(camera_name)
 
     if not camera_config:
-        return jsonify(
-            {"success": False, "message": f"{camera_name} is not a valid camera."}, 404
+        return make_response(
+            jsonify(
+                {"success": False, "message": f"{camera_name} is not a valid camera."}
+            ),
+            404,
         )
 
     if not zone_name:
-        return jsonify(
-            {"success": False, "message": "zone_name must be provided."}, 404
+        return make_response(
+            jsonify({"success": False, "message": "zone_name must be provided."}), 404
         )
 
     zone_config: ZoneConfig = camera_config.zones.get(zone_name)
 
     if not zone_config:
-        return jsonify(
-            {
-                "success": False,
-                "message": f"{zone_name} is not a valid zone for {camera_name}.",
-            },
+        return make_response(
+            jsonify(
+                {
+                    "success": False,
+                    "message": f"{zone_name} is not a valid zone for {camera_name}.",
+                }
+            ),
             404,
         )
 
@@ -386,8 +407,9 @@ def get_latest_zone_snapshot(camera_name: str, zone_name: str) -> Any:
     )
 
     if not jpg_bytes:
-        return jsonify(
-            {"success": False, "message": "Failed to load image from camera."}, 500
+        return make_response(
+            jsonify({"success": False, "message": "Failed to load image from camera."}),
+            500,
         )
 
     response = make_response(jpg_bytes)
@@ -396,7 +418,7 @@ def get_latest_zone_snapshot(camera_name: str, zone_name: str) -> Any:
 
 
 @bp.route("/detections/<detection_id>/snapshot.jpg", methods=["GET"])
-def get_detection_snapshot(detection_id: str):
+def get_detection_snapshot(detection_id: str) -> Any:
     """Get specific detection snapshot."""
     try:
         detection = Detection.get(Detection.id == detection_id)
@@ -407,20 +429,24 @@ def get_detection_snapshot(detection_id: str):
             response.headers["Content-Type"] = "image/jpg"
             return response
 
-        return jsonify(
-            {
-                "success": False,
-                "message": f"Error loading snapshot for {detection_id}.",
-            },
+        return make_response(
+            jsonify(
+                {
+                    "success": False,
+                    "message": f"Error loading snapshot for {detection_id}.",
+                }
+            ),
             500,
         )
 
     except DoesNotExist:
-        return jsonify(
-            {
-                "success": False,
-                "message": f"Detection with id {detection_id} not found.",
-            },
+        return make_response(
+            jsonify(
+                {
+                    "success": False,
+                    "message": f"Detection with id {detection_id} not found.",
+                }
+            ),
             404,
         )
 
@@ -429,15 +455,19 @@ def get_detection_snapshot(detection_id: str):
 def get_latest_detection(camera_name: str) -> Any:
     """Get the latest detection for <camera_name>."""
     if not camera_name:
-        return jsonify(
-            {"success": False, "message": "camera_name must be provided."}, 404
+        return make_response(
+            jsonify({"success": False, "message": "camera_name must be provided."}),
+            404,
         )
 
     camera_config = current_app.swatch_config.cameras.get(camera_name)
 
     if not camera_config:
-        return jsonify(
-            {"success": False, "message": f"{camera_name} is not a valid camera."}, 404
+        return make_response(
+            jsonify(
+                {"success": False, "message": f"{camera_name} is not a valid camera."}
+            ),
+            404,
         )
 
     jpg_bytes = current_app.snapshot_processor.get_latest_detection_snapshot(

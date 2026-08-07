@@ -25,7 +25,7 @@ class SnapshotModeEnum(str, Enum):
 class SnapshotConfig(SwatchBaseModel):
     """Configuration for saving snapshots."""
 
-    url: str = Field(title="Camera Snapshot Url.", default=None)
+    url: str | None = Field(title="Camera Snapshot Url.", default=None)
     mode: SnapshotModeEnum = Field(title="Snapshot mode.", default=SnapshotModeEnum.ALL)
     clean_snapshot: bool = Field(title="Save clean snapshot.", default=True)
     bounding_box: bool = Field(
@@ -126,8 +126,8 @@ class SwatchConfig(SwatchBaseModel):
         return config
 
     @classmethod
-    def parse_file(cls, path):  # type: ignore[no-untyped-def]
-        """Parses and raw file to return config."""
+    def parse_yaml_file(cls, path: str) -> SwatchConfig:
+        """Parses a raw YAML file to return config."""
         with open(path) as f:
             raw_config = f.read()
 

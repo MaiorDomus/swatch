@@ -50,3 +50,22 @@ class TestApp(unittest.TestCase):
         self.app = SwatchApp()
         assert os.path.exists(self.db_path)
         assert os.path.isfile(self.db_file)
+
+    def test_stop_does_not_crash_with_camera_without_auto_detect(self) -> None:
+        """Regression: stop() used to KeyError joining self.camera_processes
+        for every configured camera, even cameras with auto_detect disabled
+        (which never get an AutoDetector thread in the first place)."""
+        config_file = os.environ["CONFIG_FILE"]
+        with open(config_file, "w") as f:
+            yaml.safe_dump(
+                {
+                    "objects": {},
+                    "cameras": {"front": {"auto_detect": 0}},
+                },
+                f,
+            )
+
+        self.app = SwatchApp()
+
+        self.app.stop()  # should not raise KeyError
+        self.app = None  # already stopped, don't stop again in tearDown

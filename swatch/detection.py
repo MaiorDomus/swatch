@@ -26,9 +26,16 @@ class AutoDetector(threading.Thread):
         stop_event: multiprocessing.Event,
     ) -> None:
         threading.Thread.__init__(self)
+        # AutoDetector is only ever constructed with cameras sourced from
+        # SwatchConfig.runtime_config, which always stamps camera_config.name,
+        # and only when snapshot_config.url is set (see SwatchApp.__init_processing__).
+        assert camera_config.name is not None
+        assert camera_config.snapshot_config.url is not None
         self.image_processor = image_processor
         self.snap_processor = snap_processor
         self.config = camera_config
+        self.camera_name: str = camera_config.name
+        self.snapshot_url: str = camera_config.snapshot_config.url
         self.stop_event = stop_event
         self.obj_data: dict[str, Any] = {}
 
@@ -40,7 +47,7 @@ class AutoDetector(threading.Thread):
             Detection.replace(
                 id=self.obj_data[obj_id]["id"],
                 label=self.obj_data[obj_id]["object_name"],
-                camera=self.config.name,
+                camera=self.camera_name,
                 zone=self.obj_data[obj_id]["zone_name"],
                 color_variant=self.obj_data[obj_id]["variant"],
                 start_time=now,
@@ -60,7 +67,7 @@ class AutoDetector(threading.Thread):
 
     def __handle_detections__(self, detection_result: dict[str, Any]) -> None:
         """Run through map of detections for camera and add to the db."""
-        cam_name = self.config.name
+        cam_name = self.camera_name
 
         for zone_name, objects in detection_result.items():
             for object_name, object_result in objects.items():
@@ -115,11 +122,11 @@ class AutoDetector(threading.Thread):
 
     def run(self) -> None:
         # pylint: disable=singleton-comparison
-        logger.info("Starting Auto Detection for %s", self.config.name)
+        logger.info("Starting Auto Detection for %s", self.camera_name)
 
         while not self.stop_event.wait(self.config.auto_detect):
             result: dict[str, Any] = self.image_processor.detect(
-                self.config.name, self.config.snapshot_config.url
+                self.camera_name, self.snapshot_url
             )
             self.__handle_detections__(result)
 
@@ -127,7 +134,7 @@ class AutoDetector(threading.Thread):
         Detection.update(end_time=datetime.datetime.now().timestamp()).where(
             Detection.end_time == None
         ).execute()
-        logger.info("Stopping Auto Detection for %s", self.config.name)
+        logger.info("Stopping Auto Detection for %s", self.camera_name)
 
 
 class DetectionCleanup(threading.Thread):
@@ -138,7 +145,7 @@ class DetectionCleanup(threading.Thread):
         self.config: SwatchConfig = config
         self.stop_event: multiprocessing.Event = stop_event
 
-    def __cleanup_db__(self):
+    def __cleanup_db__(self) -> None:
         """Cleanup the old events in the db."""
 
         for cam_name, cam_config in self.config.cameras.items():

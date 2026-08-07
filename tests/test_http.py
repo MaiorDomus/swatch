@@ -4,11 +4,13 @@ import io
 import json
 import unittest
 
+from peewee import SqliteDatabase
 from PIL import Image
 
 from swatch.config import SwatchConfig
 from swatch.http import create_app
 from swatch.image import ImageProcessor
+from swatch.models import Detection
 from swatch.snapshot import SnapshotProcessor
 
 
@@ -53,6 +55,14 @@ class TestHttpApi(unittest.TestCase):
         app = create_app(self.swatch_config, image_processor, snapshot_processor)
         app.testing = True
         self.client = app.test_client()
+
+        self.db = SqliteDatabase(":memory:")
+        Detection.bind(self.db)
+        self.db.create_tables([Detection])
+
+    def tearDown(self) -> None:
+        self.db.drop_tables([Detection])
+        self.db.close()
 
     def test_status(self) -> None:
         resp = self.client.get("/")
@@ -110,6 +120,9 @@ class TestHttpApi(unittest.TestCase):
             data={"test_image": (io.BytesIO(_jpeg_bytes()), "test.jpg")},
             content_type="multipart/form-data",
         )
+        # Regression: this used to return status 200 was hardcoded to 404,
+        # and jsonify({...}, 200) was returning a corrupted [dict, 200] body.
+        assert resp.status_code == 200
         body = json.loads(resp.data)
         assert body["success"] is True
         assert "dominant color" in body["message"]
@@ -120,6 +133,67 @@ class TestHttpApi(unittest.TestCase):
         body = json.loads(resp.data)
         assert body["success"] is False
         assert "not a camera" in body["message"]
+
+    def test_get_detection_not_found(self) -> None:
+        """Regression: jsonify({...}, 404) used to return [dict, 404] with a
+        200 status instead of an actual 404 with the intended dict body."""
+        resp = self.client.get("/detections/does-not-exist")
+        assert resp.status_code == 404
+        body = json.loads(resp.data)
+        assert body == {
+            "success": False,
+            "message": "Detection with id does-not-exist not found.",
+        }
+
+    def test_delete_detection_success(self) -> None:
+        Detection.create(
+            id="det1",
+            label="person",
+            camera="test_cam",
+            zone="test_zone",
+            color_variant="default",
+            start_time="2026-01-01 00:00:00",
+            end_time="2026-01-01 00:00:01",
+            top_area=10,
+        )
+
+        resp = self.client.delete("/detections/det1")
+
+        assert resp.status_code == 200
+        body = json.loads(resp.data)
+        assert body == {"success": True, "message": "Deleted successfully."}
+
+    def test_get_latest_result_unknown_label(self) -> None:
+        resp = self.client.get("/nonexistent-label/latest")
+        assert resp.status_code == 200
+        assert json.loads(resp.data) == {"result": False, "area": -1}
+
+    def test_get_latest_camera_snapshot_unknown_camera(self) -> None:
+        resp = self.client.get("/does-not-exist/snapshot.jpg")
+        assert resp.status_code == 404
+        body = json.loads(resp.data)
+        assert body == {
+            "success": False,
+            "message": "does-not-exist is not a valid camera.",
+        }
+
+    def test_get_latest_zone_snapshot_unknown_zone(self) -> None:
+        resp = self.client.get("/test_cam/does-not-exist/snapshot.jpg")
+        assert resp.status_code == 404
+        body = json.loads(resp.data)
+        assert body == {
+            "success": False,
+            "message": "does-not-exist is not a valid zone for test_cam.",
+        }
+
+    def test_get_latest_detection_unknown_camera(self) -> None:
+        resp = self.client.get("/does-not-exist/detection.jpg")
+        assert resp.status_code == 404
+        body = json.loads(resp.data)
+        assert body == {
+            "success": False,
+            "message": "does-not-exist is not a valid camera.",
+        }
 
 
 if __name__ == "__main__":

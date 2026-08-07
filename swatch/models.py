@@ -8,7 +8,7 @@ from peewee import (
 )
 
 
-class Detection(Model):  # type: ignore[misc]
+class Detection(Model):
     """Detections that are tracked."""
 
     id = CharField(null=False, primary_key=True, max_length=30)

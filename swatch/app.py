@@ -38,7 +38,6 @@ class SwatchApp:
         except Exception as _e:
             logger.error("Error parsing config file\n%s", _e)
             sys.exit(1)
-            return
 
         self.__init_db__()
         self.__init_processing__()
@@ -56,10 +55,10 @@ class SwatchApp:
         if os.path.isfile(config_file):
             logger.info("Verified SwatchApp Config")
 
-        user_config = SwatchConfig.parse_file(config_file)
+        user_config = SwatchConfig.parse_yaml_file(config_file)
         self.config = user_config.runtime_config
 
-    def __init_db__(self):
+    def __init_db__(self) -> None:
         """Init the Swatch database."""
         db_file: str = os.environ.get(ENV_DB, CONST_DB_FILE)
         db_path = db_file[: db_file.rfind("/")]
@@ -137,8 +136,8 @@ class SwatchApp:
         self.detection_cleanup.join()
         self.snapshot_cleanup.join()
 
-        for cam in self.config.cameras.keys():
-            self.camera_processes[cam].join()
+        for camera_process in self.camera_processes.values():
+            camera_process.join()
 
         # stop the db
         self.db.stop()

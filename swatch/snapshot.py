@@ -20,7 +20,7 @@ from swatch.models import Detection
 logger = logging.getLogger(__name__)
 
 
-def delete_dir(date_dir: str, camera_name: str):
+def delete_dir(date_dir: str, camera_name: str) -> None:
     """Deletes a date and camera dir"""
     file_path = f"{date_dir}/{camera_name}"
 
@@ -46,7 +46,7 @@ class SnapshotProcessor:
         camera_name: str,
         zone_name: str,
         file_name: str,
-        image: ndarray,
+        image: ndarray | None,
     ) -> bool:
         """Saves the file snapshot to the correct snapshot dir."""
         time = datetime.datetime.now()
@@ -62,10 +62,13 @@ class SnapshotProcessor:
         if image is not None:
             cv2.imwrite(file, image)
         else:
+            url = self.config.cameras[camera_name].snapshot_config.url
+
+            if url is None:
+                return False
+
             try:
-                img_bytes = requests.get(
-                    self.config.cameras[camera_name].snapshot_config.url
-                ).content
+                img_bytes = requests.get(url).content
             except ConnectionError:
                 img_bytes = None
 
@@ -74,17 +77,22 @@ class SnapshotProcessor:
 
             img = cv2.imdecode(np.asarray(bytearray(img_bytes), dtype=np.uint8), -1)
 
+            if img is None:
+                return False
+
             coordinates = (
                 self.config.cameras[camera_name]
                 .zones[zone_name]
                 .coordinates.split(", ")
             )
 
-            if img.size > 0:
-                crop = img[
-                    int(coordinates[1]) : int(coordinates[3]),
-                    int(coordinates[0]) : int(coordinates[2]),
-                ]
+            if img.size == 0:
+                return False
+
+            crop = img[
+                int(coordinates[1]) : int(coordinates[3]),
+                int(coordinates[0]) : int(coordinates[2]),
+            ]
 
             cv2.imwrite(file, crop)
 
@@ -95,7 +103,7 @@ class SnapshotProcessor:
         camera_name: str,
         zone_name: str,
         detection_id: str,
-        bounding_box: set[int],
+        bounding_box: list[int],
     ) -> bool:
         """Saves the file snapshot for a detection to the correct snapshot dir."""
         time = datetime.datetime.now()
@@ -106,10 +114,13 @@ class SnapshotProcessor:
             logger.debug("%s doesn't exist, creating...", file_dir)
             os.makedirs(file_dir)
 
+        url = self.config.cameras[camera_name].snapshot_config.url
+
+        if url is None:
+            return False
+
         try:
-            img_bytes = requests.get(
-                self.config.cameras[camera_name].snapshot_config.url
-            ).content
+            img_bytes = requests.get(url).content
         except ConnectionError:
             img_bytes = None
 
@@ -118,15 +129,20 @@ class SnapshotProcessor:
 
         img = cv2.imdecode(np.asarray(bytearray(img_bytes), dtype=np.uint8), -1)
 
+        if img is None:
+            return False
+
         crop_cords = (
             self.config.cameras[camera_name].zones[zone_name].coordinates.split(", ")
         )
 
-        if img.size > 0:
-            crop = img[
-                int(crop_cords[1]) : int(crop_cords[3]),
-                int(crop_cords[0]) : int(crop_cords[2]),
-            ]
+        if img.size == 0:
+            return False
+
+        crop = img[
+            int(crop_cords[1]) : int(crop_cords[3]),
+            int(crop_cords[0]) : int(crop_cords[2]),
+        ]
 
         snapshot_config = self.config.cameras[camera_name].snapshot_config
 
@@ -147,10 +163,16 @@ class SnapshotProcessor:
 
     def get_detection_snapshot(self, detection: Detection) -> Any:
         """Get file snapshot for a specific detection."""
-        file_dir = f"{self.media_dir}/snapshots/{datetime.datetime.fromtimestamp(detection.start_time).strftime('%m-%d')}/{detection.camera}"
+        # Detection.start_time/end_time are DateTimeFields, but are always
+        # written as float epoch timestamps (see AutoDetector.__handle_db__),
+        # so they come back as float rather than the datetime the peewee
+        # stubs declare.
+        start_time = datetime.datetime.fromtimestamp(detection.start_time)  # type: ignore[arg-type]
+        file_dir = f"{self.media_dir}/snapshots/{start_time.strftime('%m-%d')}/{detection.camera}"
 
         if not os.path.exists(file_dir) and detection.end_time:
-            file_dir = f"{self.media_dir}/snapshots/{datetime.datetime.fromtimestamp(detection.end_time).strftime('%m-%d')}/{detection.camera}"
+            end_time = datetime.datetime.fromtimestamp(detection.end_time)  # type: ignore[arg-type]
+            file_dir = f"{self.media_dir}/snapshots/{end_time.strftime('%m-%d')}/{detection.camera}"
 
         if not os.path.exists(file_dir):
             return None
@@ -170,10 +192,13 @@ class SnapshotProcessor:
         camera_name: str,
     ) -> Any:
         """Get the latest web snapshot for <camera_name> and <zone_name>."""
+        url = self.config.cameras[camera_name].snapshot_config.url
+
+        if url is None:
+            return None
+
         try:
-            img_bytes = requests.get(
-                self.config.cameras[camera_name].snapshot_config.url
-            ).content
+            img_bytes = requests.get(url).content
         except ConnectionError:
             img_bytes = None
 
@@ -181,6 +206,10 @@ class SnapshotProcessor:
             return None
 
         img = cv2.imdecode(np.asarray(bytearray(img_bytes), dtype=np.uint8), -1)
+
+        if img is None:
+            return None
+
         _, jpg = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
         return jpg.tobytes()
 
@@ -191,9 +220,13 @@ class SnapshotProcessor:
     ) -> Any:
         """Get the latest web snapshot for <camera_name>."""
         camera_config: CameraConfig = self.config.cameras[camera_name]
+        url = camera_config.snapshot_config.url
+
+        if url is None:
+            return None
 
         try:
-            img_bytes = requests.get(camera_config.snapshot_config.url).content
+            img_bytes = requests.get(url).content
         except ConnectionError:
             img_bytes = None
 
@@ -201,6 +234,10 @@ class SnapshotProcessor:
             return None
 
         img = cv2.imdecode(np.asarray(bytearray(img_bytes), dtype=np.uint8), -1)
+
+        if img is None:
+            return None
+
         coordinates = camera_config.zones[zone_name].coordinates.split(", ")
         crop = img[
             int(coordinates[1]) : int(coordinates[3]),
@@ -248,8 +285,16 @@ class SnapshotCleanup(threading.Thread):
         self.media_dir = os.environ.get("MEDIA_DIR", CONST_MEDIA_DIR)
         self.stop_event = stop_event
 
-    def cleanup_snapshots(self, camera_config: CameraConfig):
+    def cleanup_snapshots(self, camera_config: CameraConfig) -> None:
         """Cleanup expired snapshots."""
+        # cleanup_snapshots is only ever called with cameras sourced from
+        # SwatchConfig.runtime_config, which always stamps camera_config.name.
+        assert camera_config.name is not None
+
+        if not os.path.exists(f"{self.media_dir}/snapshots/"):
+            # nothing has been saved yet, so there's nothing to clean up
+            return
+
         retain_days_ago = datetime.datetime.now() - datetime.timedelta(
             days=camera_config.snapshot_config.retain_days
         )
@@ -273,7 +318,7 @@ class SnapshotCleanup(threading.Thread):
                     f"{self.media_dir}/snapshots/{month}-{day}", camera_config.name
                 )
 
-    def run(self):
+    def run(self) -> None:
         """Run snapshot cleanup"""
         logger.info("Starting snapshot cleanup")
 
