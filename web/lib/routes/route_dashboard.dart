@@ -166,14 +166,25 @@ class _DashboardViewState extends State<_DashboardView> {
         future: _api.getConfig(),
         builder: (context, AsyncSnapshot<Config> config) {
           if (config.hasData) {
-            return LayoutGrid(
-              columnSizes: List.generate(columnCount, (index) => 1.fr),
-              rowSizes: List.generate(columnCount, (index) => auto),
-              children: [
-                ..._getCameras(config.data!),
-                ..._getAudioMonitors(config.data!),
-                TransitionHistoryComponent(config.data!),
-              ],
+            // Cameras get their own responsive grid (useful once there are
+            // several); audio monitors and the activity table are stacked
+            // full-width below instead of sharing grid cells with cameras --
+            // that previously left audio monitor cards narrower than a
+            // camera (they don't stretch to fill a cell on their own) and a
+            // stray empty cell/gap next to the activity table.
+            return SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  LayoutGrid(
+                    columnSizes: List.generate(columnCount, (index) => 1.fr),
+                    rowSizes: List.generate(columnCount, (index) => auto),
+                    children: _getCameras(config.data!),
+                  ),
+                  ..._getAudioMonitors(config.data!),
+                  TransitionHistoryComponent(config.data!),
+                ],
+              ),
             );
           } else {
             return Container();
