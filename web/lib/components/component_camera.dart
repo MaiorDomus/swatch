@@ -36,7 +36,7 @@ class CameraComponent extends StatelessWidget {
               child: Image.network(
                 "${_api.getHost()}/api/${camera.name}/snapshot.jpg"
                 "${cacheBuster != null ? '?t=$cacheBuster' : ''}",
-                fit: BoxFit.fitWidth,
+                fit: BoxFit.contain,
               ),
             ),
           ),
