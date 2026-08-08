@@ -9,10 +9,12 @@ class ZoneComponent extends StatelessWidget {
   final SwatchApi _api = SwatchApi();
   final Camera camera;
   final Zone zone;
+  final int? cacheBuster;
 
   ZoneComponent(
     this.camera,
     this.zone, {
+    this.cacheBuster,
     Key? key,
   }) : super(key: key);
 
@@ -33,7 +35,8 @@ class ZoneComponent extends StatelessWidget {
           ClipRRect(
             borderRadius: const BorderRadius.all(Radius.circular(8.0)),
             child: Image.network(
-              "${_api.getHost()}/api/${camera.name}/${zone.name}/snapshot.jpg",
+              "${_api.getHost()}/api/${camera.name}/${zone.name}/snapshot.jpg"
+              "${cacheBuster != null ? '?t=$cacheBuster' : ''}",
               fit: BoxFit.fill,
             ),
           ),

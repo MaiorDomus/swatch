@@ -8,9 +8,11 @@ import 'package:swatch/models/camera.dart';
 class CameraComponent extends StatelessWidget {
   final SwatchApi _api = SwatchApi();
   final Camera camera;
+  final int? cacheBuster;
 
   CameraComponent(
     this.camera, {
+    this.cacheBuster,
     Key? key,
   }) : super(key: key);
 
@@ -32,7 +34,8 @@ class CameraComponent extends StatelessWidget {
             child: ClipRRect(
               borderRadius: const BorderRadius.all(Radius.circular(8.0)),
               child: Image.network(
-                "${_api.getHost()}/api/${camera.name}/snapshot.jpg",
+                "${_api.getHost()}/api/${camera.name}/snapshot.jpg"
+                "${cacheBuster != null ? '?t=$cacheBuster' : ''}",
                 fit: BoxFit.fitWidth,
               ),
             ),
@@ -75,7 +78,11 @@ class CameraComponent extends StatelessWidget {
       config.zones.length + 1,
       (index) {
         if (index < config.zones.length) {
-          return ZoneComponent(config, config.zones[keys[index]]!);
+          return ZoneComponent(
+            config,
+            config.zones[keys[index]]!,
+            cacheBuster: cacheBuster,
+          );
         } else {
           return const SizedBox();
           //return const CreateZoneComponent();
