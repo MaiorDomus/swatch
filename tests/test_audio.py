@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+from peewee import SqliteDatabase
 
 from swatch.audio import (
     SILENT_DBFS,
@@ -20,6 +21,7 @@ from swatch.audio import (
     compute_spectral_flux,
 )
 from swatch.config import AudioMonitorConfig
+from swatch.models import Detection
 
 HAS_FFMPEG = shutil.which("ffmpeg") is not None
 
@@ -154,6 +156,89 @@ class TestSoundStateClassifier(unittest.TestCase):
         assert classifier.update(True) is True
 
 
+class TestAudioMonitorDetectionHistory(unittest.TestCase):
+    """Testing that on/off transitions get recorded in the Detection table,
+    the same way object detections' history does, so a dashboard table can
+    show both from the one /api/detections endpoint."""
+
+    def setUp(self) -> None:
+        self.db = SqliteDatabase(":memory:")
+        Detection.bind(self.db)
+        # Detection.create_table() would make end_time NOT NULL (the field
+        # has no null=True), rejecting an in-progress detection -- the real
+        # schema (migrations/001_init_detection_table.py) leaves it
+        # nullable, so build the table that way here too.
+        self.db.execute_sql(
+            'CREATE TABLE IF NOT EXISTS "detection" ('
+            '"id" VARCHAR(30) NOT NULL PRIMARY KEY, "label" VARCHAR(20) NOT NULL, '
+            '"camera" VARCHAR(20) NOT NULL, "zone" VARCHAR(20) NOT NULL, '
+            '"color_variant" VARCHAR(20) NOT NULL, "start_time" DATETIME NOT NULL, '
+            '"end_time" DATETIME, "top_area" INTEGER NOT NULL)'
+        )
+
+    def tearDown(self) -> None:
+        self.db.drop_tables([Detection])
+        self.db.close()
+
+    def _make_monitor(self) -> AudioMonitor:
+        config = AudioMonitorConfig(name="kitchen_hood", rtsp_url="unused")
+        return AudioMonitor(config, multiprocessing.Event(), input_source="unused")
+
+    def test_turning_on_creates_an_open_detection_row(self) -> None:
+        monitor = self._make_monitor()
+        monitor.is_on = True
+        monitor.__record_transition__()
+
+        rows = list(Detection.select().where(Detection.label == "kitchen_hood"))
+        assert len(rows) == 1
+        assert rows[0].end_time is None
+        assert rows[0].camera == ""
+        assert rows[0].color_variant == "audio"
+
+    def test_turning_off_closes_the_open_detection_row(self) -> None:
+        monitor = self._make_monitor()
+        monitor.is_on = True
+        monitor.__record_transition__()
+
+        monitor.is_on = False
+        monitor.__record_transition__()
+
+        rows = list(Detection.select().where(Detection.label == "kitchen_hood"))
+        assert len(rows) == 1
+        assert rows[0].end_time is not None
+
+    def test_repeated_on_readings_do_not_create_duplicate_rows(self) -> None:
+        monitor = self._make_monitor()
+        monitor.is_on = True
+        monitor.__record_transition__()
+        monitor.__record_transition__()
+        monitor.__record_transition__()
+
+        rows = list(Detection.select().where(Detection.label == "kitchen_hood"))
+        assert len(rows) == 1
+
+    def test_close_stale_detection_ends_an_open_row_and_resets_is_on(self) -> None:
+        """A stream that drops mid-"on" shouldn't leave is_on stuck True or
+        a Detection row with no end_time forever."""
+        monitor = self._make_monitor()
+        monitor.is_on = True
+        monitor.__record_transition__()
+
+        monitor.__close_stale_detection__()
+
+        assert monitor.is_on is False
+        rows = list(Detection.select().where(Detection.label == "kitchen_hood"))
+        assert len(rows) == 1
+        assert rows[0].end_time is not None
+
+    def test_close_stale_detection_is_a_noop_when_already_off(self) -> None:
+        monitor = self._make_monitor()
+        monitor.__close_stale_detection__()
+
+        rows = list(Detection.select().where(Detection.label == "kitchen_hood"))
+        assert len(rows) == 0
+
+
 @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is not installed")
 class TestAudioMonitorEndToEnd(unittest.TestCase):
     """End-to-end tests that actually invoke ffmpeg against local WAV fixtures,
@@ -170,6 +255,25 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         shutil.rmtree(cls.tmp_dir, ignore_errors=True)
+
+    def setUp(self) -> None:
+        # _process_stream() records on/off transitions to Detection -- a
+        # test run reaching is_on=True needs a bound database for that
+        # write to succeed. See TestAudioMonitorDetectionHistory for why
+        # the table is built via raw SQL instead of create_table().
+        self.db = SqliteDatabase(":memory:")
+        Detection.bind(self.db)
+        self.db.execute_sql(
+            'CREATE TABLE IF NOT EXISTS "detection" ('
+            '"id" VARCHAR(30) NOT NULL PRIMARY KEY, "label" VARCHAR(20) NOT NULL, '
+            '"camera" VARCHAR(20) NOT NULL, "zone" VARCHAR(20) NOT NULL, '
+            '"color_variant" VARCHAR(20) NOT NULL, "start_time" DATETIME NOT NULL, '
+            '"end_time" DATETIME, "top_area" INTEGER NOT NULL)'
+        )
+
+    def tearDown(self) -> None:
+        self.db.drop_tables([Detection])
+        self.db.close()
 
     @classmethod
     def _generate_fan_noise(cls) -> str:

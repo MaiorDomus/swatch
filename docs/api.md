@@ -68,6 +68,31 @@ Audio monitor result:
 } // json
 ```
 
+## `/api/detections`
+
+Returns on/off history (each row spans a `start_time` to an `end_time`, or `end_time: null`
+if still ongoing). Query params, all optional: `label` (object or `audio_monitors` name --
+both share this history the same way they share `/<label>/latest`), `camera`, `zone`,
+`limit` (default 100), `after`/`before` (unix timestamps, filters on `start_time`).
+
+```json
+[
+    {
+        "id":"kitchen_hood.ab12cd",
+        "label":"kitchen_hood",
+        "camera":"",
+        "zone":"",
+        "color_variant":"audio",
+        "top_area":0,
+        "start_time":1786183359.308,
+        "end_time":1786183400.512
+    }
+] // json
+```
+
+Object detection rows populate `camera`/`zone`/`top_area`/`color_variant` from the match;
+audio monitor rows leave those blank/zero since there's no equivalent.
+
 ## `/api/<camera_name>/snapshot.jpg`
 
 Returns a snapshot of the latest image for the <camera_name>.

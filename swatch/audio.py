@@ -12,6 +12,7 @@ fool it), but it's deliberately lightweight and dependency-free (just numpy),
 consistent with the rest of swatch's detection code.
 """
 
+import datetime
 import logging
 import multiprocessing
 import subprocess
@@ -21,6 +22,8 @@ import numpy as np
 
 from swatch.config import AudioMonitorConfig
 from swatch.debounce import SustainedStateTracker
+from swatch.models import Detection
+from swatch.util import get_random_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +123,12 @@ class AudioMonitor(threading.Thread):
         self._classifier = SoundStateClassifier(
             config.window_seconds, config.min_on_seconds, config.min_off_seconds
         )
+        # Tracks the currently-open Detection row (if any), so on/off
+        # history for audio monitors shows up in /api/detections the same
+        # way object detections' does -- lets the dashboard build one
+        # combined "last N on/off" table from a single endpoint.
+        self._was_on = False
+        self._open_detection_id: str | None = None
 
     def _build_ffmpeg_cmd(self) -> list[str]:
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
@@ -155,6 +164,47 @@ class AudioMonitor(threading.Thread):
             "pipe:1",
         ]
         return cmd
+
+    def __record_transition__(self) -> None:
+        """Create/end a Detection row whenever is_on flips, mirroring
+        AutoDetector's new/end bookkeeping for object detections. camera/
+        zone/color_variant/top_area don't have an audio equivalent, so
+        they're left blank/zero -- label (the monitor name) is what
+        /api/detections?label=... filters on."""
+        if self.is_on and not self._was_on:
+            self._open_detection_id = f"{self.monitor_name}.{get_random_suffix()}"
+            Detection.replace(
+                id=self._open_detection_id,
+                label=self.monitor_name,
+                camera="",
+                zone="",
+                color_variant="audio",
+                start_time=datetime.datetime.now().timestamp(),
+                top_area=0,
+            ).execute()
+        elif not self.is_on and self._was_on and self._open_detection_id:
+            Detection.update(
+                end_time=datetime.datetime.now().timestamp()
+            ).where(Detection.id == self._open_detection_id).execute()
+            self._open_detection_id = None
+
+        self._was_on = self.is_on
+
+    def __close_stale_detection__(self) -> None:
+        """If the stream dropped mid-"on", end the open detection and reset
+        state so a reconnect starts clean -- otherwise is_on (and any open
+        Detection row) would stay stuck "on" through a real disconnect until
+        the next stream happens to report enough consecutive quiet windows,
+        which never dependably happens if the stream just isn't there."""
+        if self.is_on:
+            self.is_on = False
+            self.__record_transition__()
+
+        self._classifier = SoundStateClassifier(
+            self.config.window_seconds,
+            self.config.min_on_seconds,
+            self.config.min_off_seconds,
+        )
 
     def _process_stream(self) -> None:
         """Run one ffmpeg session end-to-end, classifying audio until it
@@ -193,6 +243,7 @@ class AudioMonitor(threading.Thread):
                     and flux <= self.config.max_spectral_flux
                 )
                 self.is_on = self._classifier.update(is_candidate)
+                self.__record_transition__()
         finally:
             process.terminate()
 
@@ -229,6 +280,8 @@ class AudioMonitor(threading.Thread):
                 logger.exception(
                     "Audio monitor for %s crashed, retrying", self.monitor_name
                 )
+
+            self.__close_stale_detection__()
 
             if self.stop_event.wait(reconnect_backoff_seconds):
                 break

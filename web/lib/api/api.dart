@@ -50,11 +50,18 @@ class SwatchApi {
     }
   }
 
-  Future<List<DetectionEvent>> getDetections() async {
+  Future<List<DetectionEvent>> getDetections({
+    final String? label,
+    final int? limit,
+  }) async {
     const base = "/api/detections";
-    final response = await http.get(Uri.http(_swatchHost, base)).timeout(
-          const Duration(seconds: 15),
-        );
+    final params = <String, String>{
+      if (label != null) "label": label,
+      if (limit != null) "limit": limit.toString(),
+    };
+    final response = await http
+        .get(Uri.http(_swatchHost, base, params.isEmpty ? null : params))
+        .timeout(const Duration(seconds: 15));
 
     if (response.statusCode == 200) {
       final parsed = json.decode(response.body);

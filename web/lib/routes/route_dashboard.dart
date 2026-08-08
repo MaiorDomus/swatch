@@ -5,6 +5,7 @@ import 'package:flutter_layout_grid/flutter_layout_grid.dart';
 import 'package:swatch/api/api.dart';
 import 'package:swatch/components/component_audio_monitor.dart';
 import 'package:swatch/components/component_camera.dart';
+import 'package:swatch/components/component_transition_history.dart';
 import 'package:swatch/const.dart';
 import 'package:swatch/ext/extension_double.dart';
 import 'package:swatch/models/config.dart';
@@ -171,6 +172,7 @@ class _DashboardViewState extends State<_DashboardView> {
               children: [
                 ..._getCameras(config.data!),
                 ..._getAudioMonitors(config.data!),
+                TransitionHistoryComponent(config.data!),
               ],
             );
           } else {
