@@ -2,8 +2,10 @@
 
 import io
 import json
+import os
+import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from peewee import SqliteDatabase
 from PIL import Image
@@ -84,6 +86,30 @@ class TestHttpApi(unittest.TestCase):
         schema = json.loads(resp.data)
         assert "$defs" in schema
         assert schema["title"] == "SwatchConfig"
+
+    def test_get_config_raw_returns_the_file_as_written(self) -> None:
+        yaml_text = "# a comment the parsed model wouldn't preserve\nobjects: {}\ncameras: {}\n"
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False
+        ) as tmp:
+            tmp.write(yaml_text)
+            tmp_path = tmp.name
+
+        try:
+            with patch.dict(os.environ, {"CONFIG_FILE": tmp_path}):
+                resp = self.client.get("/config/raw")
+
+            assert resp.status_code == 200
+            assert resp.content_type.startswith("text/plain")
+            assert resp.data.decode() == yaml_text
+        finally:
+            os.remove(tmp_path)
+
+    def test_get_config_raw_missing_file_returns_404(self) -> None:
+        with patch.dict(os.environ, {"CONFIG_FILE": "/nonexistent/config.yml"}):
+            resp = self.client.get("/config/raw")
+
+        assert resp.status_code == 404
 
     def test_colortest_mask_requires_image(self) -> None:
         resp = self.client.post("/colortest/mask", data={})

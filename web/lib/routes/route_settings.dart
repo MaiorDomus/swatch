@@ -62,9 +62,63 @@ class _SettingsView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        alignment: Alignment.center,
-        child: const Text("Settings will be added later"),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8.0),
+              child: Text(
+                "config.yaml",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8.0),
+              child: Text(
+                "Read-only -- edit config.yaml directly to make changes.",
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ),
+            Expanded(
+              child: FutureBuilder<String?>(
+                future: _api.getRawConfig(),
+                builder: (context, AsyncSnapshot<String?> snapshot) {
+                  if (!snapshot.hasData) {
+                    if (snapshot.connectionState == ConnectionState.done) {
+                      return const Text("Unable to load config.yaml.");
+                    }
+
+                    return const Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
+                  }
+
+                  return Card(
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(8.0)),
+                    ),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(12.0),
+                      child: SelectableText(
+                        snapshot.data!,
+                        style: const TextStyle(
+                          fontFamily: "monospace",
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

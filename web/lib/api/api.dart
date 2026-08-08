@@ -62,6 +62,21 @@ class SwatchApi {
     }
   }
 
+  /// Raw config.yaml contents (as written -- comments included), unlike
+  /// getConfig() which is the parsed-and-re-serialized model.
+  Future<String?> getRawConfig() async {
+    const base = "/api/config/raw";
+    final response = await http.get(_apiUri(base)).timeout(
+          const Duration(seconds: 15),
+        );
+
+    if (response.statusCode == 200) {
+      return response.body;
+    } else {
+      return null;
+    }
+  }
+
   Future<List<DetectionEvent>> getDetections({
     final String? label,
     final int? limit,

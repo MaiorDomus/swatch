@@ -3,6 +3,7 @@
 from functools import reduce
 import json
 import logging
+import os
 from typing import Any
 
 import cv2
@@ -22,6 +23,7 @@ from playhouse.shortcuts import model_to_dict
 
 from swatch.audio import AudioMonitor
 from swatch.config import CameraConfig, ColorVariantConfig, SwatchConfig, ZoneConfig
+from swatch.const import CONST_CONFIG_FILE, ENV_CONFIG
 from swatch.image import ImageProcessor
 from swatch.models import Detection
 from swatch.snapshot import SnapshotProcessor
@@ -75,6 +77,22 @@ def get_config_schema() -> Any:
         json.dumps(current_app.swatch_config.model_json_schema()),
         mimetype="application/json",
     )
+
+
+@bp.route("/config/raw", methods=["GET"])
+def get_config_raw() -> Any:
+    """Get the config.yaml file's contents exactly as the user wrote them
+    (comments and formatting included), unlike /config which returns the
+    parsed and re-serialized SwatchConfig model."""
+    config_file = os.environ.get(ENV_CONFIG, CONST_CONFIG_FILE)
+
+    try:
+        with open(config_file, "r", encoding="utf-8") as file:
+            contents = file.read()
+    except OSError:
+        return make_response("", 404)
+
+    return current_app.response_class(contents, mimetype="text/plain")
 
 
 ### Color Testing Routes

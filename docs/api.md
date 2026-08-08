@@ -4,6 +4,12 @@
 
 Returns JSON config
 
+## `/api/config/raw`
+
+Returns the config.yaml file's contents exactly as written on disk (comments and
+formatting included), as `text/plain` -- unlike `/config`, which returns the parsed and
+re-serialized model. 404s if the config file can't be read.
+
 ## `/api/colortest/values`
 
 ```json

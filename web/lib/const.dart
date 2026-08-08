@@ -39,7 +39,8 @@ List<CollapsibleItem> getSidebarRoutes(
       text: "Settings",
       icon: Icons.settings_outlined,
       isSelected: name == SettingsRoute.route,
-      onPressed: () {},
+      onPressed: () =>
+          Navigator.of(context).pushReplacementNamed(SettingsRoute.route),
     ),
     CollapsibleItem(
       text: "GitHub",
