@@ -4,10 +4,11 @@ import datetime
 import logging
 import multiprocessing
 import threading
+import time
 from typing import Any
 
 from swatch.config import CameraConfig, SwatchConfig
-from swatch.debounce import SustainedStateTracker
+from swatch.debounce import TimeBasedSustainedStateTracker
 from swatch.image import ImageProcessor
 from swatch.models import Detection
 from swatch.snapshot import SnapshotProcessor
@@ -39,7 +40,7 @@ class AutoDetector(threading.Thread):
         self.snapshot_url: str = camera_config.snapshot_config.url
         self.stop_event = stop_event
         self.obj_data: dict[str, Any] = {}
-        self.trackers: dict[str, SustainedStateTracker] = {}
+        self.trackers: dict[str, TimeBasedSustainedStateTracker] = {}
 
     def __handle_db__(self, db_type: str, obj_id: str) -> None:
         """Handle the db transactions for detection."""
@@ -67,27 +68,37 @@ class AutoDetector(threading.Thread):
                 end_time=now,
             ).where(Detection.id == self.obj_data[obj_id]["id"]).execute()
 
-    def __debounce_results__(self, detection_result: dict[str, Any]) -> None:
+    def __debounce_results__(
+        self, detection_result: dict[str, Any], now: float | None = None
+    ) -> None:
         """Debounce each zone/object's raw single-frame result in place, so a
         stray miss or false positive from one noisy frame doesn't flip the
         reported state. A single frame can fail area/ratio/solidity
         thresholds on a real match (JPEG artifacts, exposure flicker) even
         when the object is genuinely present, the same noisy-single-sample
-        problem audio_monitors already solve with a sustained on/off window."""
+        problem audio_monitors already solve with a sustained on/off window.
+
+        Uses real elapsed time (TimeBasedSustainedStateTracker) rather than
+        counting auto_detect ticks: each cycle also does an HTTP snapshot
+        fetch, which routinely takes longer than auto_detect's configured
+        interval, so counting ticks would silently stretch min_on_seconds/
+        min_off_seconds well past what's configured."""
+        if now is None:
+            now = time.monotonic()
+
         for zone_name, objects in detection_result.items():
             for object_name, object_result in objects.items():
                 tracker_key = f"{self.camera_name}.{zone_name}.{object_name}"
 
                 if tracker_key not in self.trackers:
                     obj_config = self.image_processor.config.objects[object_name]
-                    self.trackers[tracker_key] = SustainedStateTracker(
-                        window_seconds=self.config.auto_detect,
+                    self.trackers[tracker_key] = TimeBasedSustainedStateTracker(
                         min_on_seconds=obj_config.min_on_seconds,
                         min_off_seconds=obj_config.min_off_seconds,
                     )
 
                 object_result["result"] = self.trackers[tracker_key].update(
-                    bool(object_result.get("result", False))
+                    bool(object_result.get("result", False)), now
                 )
 
     def __handle_detections__(self, detection_result: dict[str, Any]) -> None:
