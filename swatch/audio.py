@@ -20,6 +20,7 @@ import threading
 import numpy as np
 
 from swatch.config import AudioMonitorConfig
+from swatch.debounce import SustainedStateTracker
 
 logger = logging.getLogger(__name__)
 
@@ -83,41 +84,11 @@ def compute_spectral_flux(
     return float(np.linalg.norm(curr_spectrum - prev_spectrum))
 
 
-class SoundStateClassifier:
-    """Debounces per-window loud+steady booleans into an on/off state.
-
-    A state flip only takes effect once the *opposite* classification has
-    been seen for min_on_seconds (to turn on) or min_off_seconds (to turn
-    off) worth of consecutive windows, so a single stray loud noise or a
-    brief lull doesn't flicker the reported state.
-    """
-
-    def __init__(
-        self,
-        window_seconds: float,
-        min_on_seconds: float,
-        min_off_seconds: float,
-    ) -> None:
-        self.min_on_windows = max(1, round(min_on_seconds / window_seconds))
-        self.min_off_windows = max(1, round(min_off_seconds / window_seconds))
-        self.is_on = False
-        self._pending_windows = 0
-
-    def update(self, is_candidate: bool) -> bool:
-        """Feed in whether the latest window qualifies as loud+steady;
-        returns the (possibly still-debouncing) current on/off state."""
-        if is_candidate == self.is_on:
-            self._pending_windows = 0
-            return self.is_on
-
-        self._pending_windows += 1
-        required_windows = self.min_on_windows if is_candidate else self.min_off_windows
-
-        if self._pending_windows >= required_windows:
-            self.is_on = is_candidate
-            self._pending_windows = 0
-
-        return self.is_on
+# SoundStateClassifier is the same debounce primitive AutoDetector now uses
+# for noisy per-frame object detections (see swatch/detection.py) -- kept as
+# an alias here since it's the established public name/import path for the
+# audio side.
+SoundStateClassifier = SustainedStateTracker
 
 
 class AudioMonitor(threading.Thread):

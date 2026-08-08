@@ -92,6 +92,26 @@ class ObjectConfig(SwatchBaseModel):
         title="Max solidity (matched area / convex hull area, 0-1) for valid detection.",
         default=1.1,
     )
+    min_on_seconds: float = Field(
+        title=(
+            "How long a match must be sustained across consecutive auto_detect "
+            "ticks before switching on (default: shown below, i.e. any single "
+            "match). A single video frame can be too noisy for area/ratio/"
+            "solidity thresholds to hold every tick even while genuinely "
+            "matching (JPEG artifacts, exposure flicker), so this and "
+            "min_off_seconds debounce the reported state the same way "
+            "audio_monitors already do."
+        ),
+        default=0.0,
+    )
+    min_off_seconds: float = Field(
+        title=(
+            "How long a match must be absent across consecutive auto_detect "
+            "ticks before switching off (default: shown below, i.e. any "
+            "single miss)."
+        ),
+        default=0.0,
+    )
 
 
 class ZoneConfig(SwatchBaseModel):

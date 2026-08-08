@@ -48,6 +48,18 @@ objects:
     # OPTIONAL: the max solidity (matched area / convex hull area, 0-1) for valid object
     # detection (default: shown below).
     max_solidity: 1.1
+    # OPTIONAL: how long (in seconds) a match must be sustained across consecutive
+    # auto_detect ticks before switching on (default: shown below, i.e. any single
+    # match). A small object can occupy few enough pixels that JPEG artifacts or
+    # exposure flicker cause area/ratio/solidity to fail on some frames even while
+    # genuinely matching -- raise this (and min_off_seconds) if you see the reported
+    # state flicker despite a real, unchanging object. Debounces the same way
+    # audio_monitors' min_on_seconds/min_off_seconds do.
+    min_on_seconds: 0
+    # OPTIONAL: how long (in seconds) a match must be absent across consecutive
+    # auto_detect ticks before switching off (default: shown below, i.e. any single
+    # miss).
+    min_off_seconds: 0
 ```
 
 ### `cameras`
