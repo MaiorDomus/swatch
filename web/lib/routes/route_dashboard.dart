@@ -182,7 +182,7 @@ class _DashboardViewState extends State<_DashboardView> {
                     children: _getCameras(config.data!),
                   ),
                   ..._getAudioMonitors(config.data!),
-                  TransitionHistoryComponent(config.data!),
+                  TransitionHistoryComponent(config.data!, limit: 10),
                 ],
               ),
             );
