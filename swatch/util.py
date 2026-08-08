@@ -22,12 +22,17 @@ def mask_image(crop: Any, color_variant: ColorVariantConfig) -> tuple[Any, int]:
     )
     color_upper = color_variant.color_upper.split(", ")
 
+    # color_lower/color_upper are documented (and produced by
+    # /api/colortest/values, which uses PIL under the hood) as R, G, B, but
+    # crop comes from cv2.imread/imdecode, which is BGR -- reverse here so
+    # each bound lines up with the channel it's actually meant to constrain,
+    # instead of the R bound gating Blue and the B bound gating Red.
     lower: np.ndarray = np.array(
-        [int(color_lower[0]), int(color_lower[1]), int(color_lower[2])],
+        [int(color_lower[2]), int(color_lower[1]), int(color_lower[0])],
         dtype="uint8",
     )
     upper: np.ndarray = np.array(
-        [int(color_upper[0]), int(color_upper[1]), int(color_upper[2])],
+        [int(color_upper[2]), int(color_upper[1]), int(color_upper[0])],
         dtype="uint8",
     )
 

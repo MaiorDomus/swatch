@@ -46,6 +46,27 @@ class TestMaskImage(unittest.TestCase):
 
         assert matches == 0
 
+    def test_color_lower_upper_are_interpreted_as_rgb_not_bgr(self) -> None:
+        """color_lower/color_upper are documented (and produced by
+        /api/colortest/values) as R, G, B. crop arrays (from cv2.imread/
+        imdecode) are BGR, so a pixel that's clearly red (high R, low G/B)
+        must match an R,G,B config target of "red", not get compared against
+        the wrong channels and match "blue" instead."""
+        # BGR order: low blue, low green, high red -- i.e. actually red.
+        crop = np.full((2, 2, 3), (10, 10, 200), dtype="uint8")
+        red_variant = ColorVariantConfig(
+            color_lower="180, 0, 0", color_upper="255, 50, 50"
+        )
+        blue_variant = ColorVariantConfig(
+            color_lower="0, 0, 180", color_upper="50, 50, 255"
+        )
+
+        _, red_matches = mask_image(crop, red_variant)
+        _, blue_matches = mask_image(crop, blue_variant)
+
+        assert red_matches == 2 * 2 * 3
+        assert blue_matches == 0
+
 
 def _first_contour(mask: np.ndarray):
     """Extract the first external contour from a mask, for solidity tests."""
