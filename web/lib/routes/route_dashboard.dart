@@ -1,13 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_layout_grid/flutter_layout_grid.dart';
 import 'package:swatch/api/api.dart';
 import 'package:swatch/components/component_audio_monitor.dart';
 import 'package:swatch/components/component_camera.dart';
 import 'package:swatch/components/component_transition_history.dart';
 import 'package:swatch/const.dart';
-import 'package:swatch/ext/extension_double.dart';
 import 'package:swatch/models/config.dart';
 
 import 'package:collapsible_sidebar/collapsible_sidebar.dart';
@@ -159,28 +157,20 @@ class _DashboardViewState extends State<_DashboardView> {
 
   @override
   Widget build(BuildContext context) {
-    final columnCount = MediaQuery.of(context).size.width.getColumnsForWidth();
-
     return Scaffold(
       body: FutureBuilder(
         future: _api.getConfig(),
         builder: (context, AsyncSnapshot<Config> config) {
           if (config.hasData) {
-            // Cameras get their own responsive grid (useful once there are
-            // several); audio monitors and the activity table are stacked
-            // full-width below instead of sharing grid cells with cameras --
-            // that previously left audio monitor cards narrower than a
-            // camera (they don't stretch to fill a cell on their own) and a
-            // stray empty cell/gap next to the activity table.
+            // Everything stacks full-width in one column -- cameras used to
+            // sit in their own multi-column grid, which left them narrower
+            // than the audio monitor/activity table below once there was
+            // more than one grid column.
             return SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  LayoutGrid(
-                    columnSizes: List.generate(columnCount, (index) => 1.fr),
-                    rowSizes: List.generate(columnCount, (index) => auto),
-                    children: _getCameras(config.data!),
-                  ),
+                  ..._getCameras(config.data!),
                   ..._getAudioMonitors(config.data!),
                   TransitionHistoryComponent(config.data!, limit: 10),
                 ],
