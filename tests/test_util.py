@@ -116,6 +116,22 @@ class TestDetectObjects(unittest.TestCase):
         assert detected[0]["box"] == [2, 2, 12, 6]
         assert detected[0]["solidity"] == 1.0
 
+    def test_detect_objects_closes_small_gaps_in_a_blob(self) -> None:
+        """A 1px gap in an otherwise-solid blob (e.g. from JPEG compression
+        on a small target) should get filled by morphological closing
+        before contour analysis, rather than fragmenting the blob or
+        tanking its solidity."""
+        gappy_mask = np.zeros((20, 20, 3), dtype="uint8")
+        gappy_mask[6:9, 6:9] = (255, 255, 255)
+        gappy_mask[7, 7] = (0, 0, 0)  # punch a 1px hole in the middle
+
+        obj = ObjectConfig(min_area=0, max_area=1000, min_solidity=0.95)
+        detected = detect_objects(gappy_mask, obj)
+
+        assert len(detected) == 1
+        assert detected[0]["area"] == 9
+        assert detected[0]["solidity"] == 1.0
+
     def test_detect_objects_filters_out_blob_below_min_solidity(self) -> None:
         """A jagged "E" shape should be rejected by a high min_solidity even
         though its bounding box area/ratio would otherwise pass -- this is

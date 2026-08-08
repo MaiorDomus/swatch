@@ -12,6 +12,11 @@ from swatch.config import ColorVariantConfig, ObjectConfig
 
 ### Image utils
 
+# Kernel for the morphological closing in detect_objects(). 3x3 is enough to
+# bridge single-pixel gaps in a small/noisy blob without merging distinct
+# objects that are actually separated in the frame.
+MORPH_CLOSE_KERNEL = np.ones((3, 3), np.uint8)
+
 
 def mask_image(crop: Any, color_variant: ColorVariantConfig) -> tuple[Any, int]:
     """Mask an image with color values"""
@@ -66,6 +71,18 @@ def detect_objects(mask: Any, obj: ObjectConfig) -> list[dict[str, Any]]:
 
     # calculate contours
     _, thresh = cv2.threshold(gray, 1, 255, 0)
+
+    # Morphological closing (dilate then erode) fills small gaps within a
+    # real match and smooths jagged edges before contour/solidity analysis.
+    # JPEG compression on a small target can fragment one solid blob into
+    # several disconnected specks, or leave a jagged boundary that tanks
+    # solidity, even though the underlying object is a clean shape. Applied
+    # here (on the binary threshold) rather than in mask_image(): closing
+    # the color-matched mask there doesn't help, since bitwise_and against
+    # the original crop re-darkens any newly-filled pixel that wasn't
+    # actually color-matched in the source image.
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, MORPH_CLOSE_KERNEL)
+
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     detected = []
