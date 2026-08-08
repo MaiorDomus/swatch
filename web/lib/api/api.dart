@@ -12,19 +12,25 @@ import 'package:window_location_href/window_location_href.dart';
 class SwatchApi {
   static final SwatchApi _singleton = SwatchApi._internal();
   static String _swatchHost = "";
+  // Matches whatever scheme the page itself was loaded with (e.g. behind a
+  // reverse proxy forcing https) -- API calls previously always used
+  // Uri.http() regardless, which browsers block as mixed content on an
+  // https page even once the host is parsed correctly.
+  static String _swatchScheme = "http";
 
   factory SwatchApi() {
     if (kDebugMode) {
       _swatchHost = "localhost:4500";
+      _swatchScheme = "http";
     } else {
-      final location = (getHref() ?? "").replaceAll("http://", "");
+      // Uri.parse handles https (and ports, paths, etc.) correctly; the
+      // previous approach (stripping the literal string "http://") left an
+      // https:// href untouched, since that substring never occurs in one.
+      final uri = Uri.tryParse(getHref() ?? "");
 
-      final pathStart = location.indexOf("/");
-
-      if (pathStart == -1) {
-        _swatchHost = location;
-      } else {
-        _swatchHost = location.substring(0, pathStart);
+      if (uri != null && uri.host.isNotEmpty) {
+        _swatchHost = uri.hasPort ? "${uri.host}:${uri.port}" : uri.host;
+        _swatchScheme = uri.scheme.isNotEmpty ? uri.scheme : "http";
       }
     }
 
@@ -33,13 +39,19 @@ class SwatchApi {
 
   SwatchApi._internal();
 
-  String getHost() => Uri.http(_swatchHost, "").toString();
+  Uri _apiUri(final String path, [final Map<String, String>? params]) {
+    return _swatchScheme == "https"
+        ? Uri.https(_swatchHost, path, params)
+        : Uri.http(_swatchHost, path, params);
+  }
+
+  String getHost() => _apiUri("").toString();
 
   /// Swatch API Funs
 
   Future<Config> getConfig() async {
     const base = "/api/config";
-    final response = await http.get(Uri.http(_swatchHost, base)).timeout(
+    final response = await http.get(_apiUri(base)).timeout(
           const Duration(seconds: 15),
         );
 
@@ -60,7 +72,7 @@ class SwatchApi {
       if (limit != null) "limit": limit.toString(),
     };
     final response = await http
-        .get(Uri.http(_swatchHost, base, params.isEmpty ? null : params))
+        .get(_apiUri(base, params.isEmpty ? null : params))
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode == 200) {
@@ -75,7 +87,7 @@ class SwatchApi {
 
   Future<Config> getLatest() async {
     const base = "/api/all/latest";
-    final response = await http.get(Uri.http(_swatchHost, base)).timeout(
+    final response = await http.get(_apiUri(base)).timeout(
           const Duration(seconds: 15),
         );
 
@@ -88,7 +100,7 @@ class SwatchApi {
 
   Future<Map<String, dynamic>> getLatestForLabel(final String label) async {
     final base = "/api/$label/latest";
-    final response = await http.get(Uri.http(_swatchHost, base)).timeout(
+    final response = await http.get(_apiUri(base)).timeout(
           const Duration(seconds: 15),
         );
 
@@ -105,7 +117,7 @@ class SwatchApi {
     String colorUpper,
   ) async {
     const base = "/api/colortest/mask";
-    final request = http.MultipartRequest("POST", Uri.http(_swatchHost, base));
+    final request = http.MultipartRequest("POST", _apiUri(base));
     request.fields["color_lower"] = colorLower;
     request.fields["color_upper"] = colorUpper;
     request.files.add(
@@ -131,7 +143,7 @@ class SwatchApi {
 
   Future<bool> deleteDetection(final String detectionId) async {
     final base = "/api/detections/$detectionId";
-    final response = await http.delete(Uri.http(_swatchHost, base)).timeout(
+    final response = await http.delete(_apiUri(base)).timeout(
       const Duration(seconds: 15),
     );
 
