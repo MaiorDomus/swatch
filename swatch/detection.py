@@ -194,7 +194,21 @@ class DetectionCleanup(threading.Thread):
             Detection.delete().where(
                 Detection.camera == cam_name,
                 Detection.start_time < expire_after,
-            )
+            ).execute()
+
+        # audio_monitors' Detection rows have no camera (see
+        # AudioMonitor.__record_transition__), so they'd never match the
+        # loop above and would accumulate forever -- prune by label instead.
+        for monitor_name, monitor_config in self.config.audio_monitors.items():
+            expire_after = (
+                datetime.datetime.now()
+                - datetime.timedelta(days=monitor_config.retain_days)
+            ).timestamp()
+
+            Detection.delete().where(
+                Detection.label == monitor_name,
+                Detection.start_time < expire_after,
+            ).execute()
 
     def run(self) -> None:
         logger.info("Starting Detection Cleanup")

@@ -177,6 +177,10 @@ class AudioMonitorConfig(SwatchBaseModel):
         title="How long quiet or unsteady audio must be sustained before switching off.",
         default=10.0,
     )
+    retain_days: int = Field(
+        title="Number of days of on/off history to keep (default: shown below).",
+        default=1,
+    )
 
 
 class SwatchConfig(SwatchBaseModel):

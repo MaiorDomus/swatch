@@ -1,12 +1,16 @@
-"""Tests for AutoDetector's result debouncing."""
+"""Tests for AutoDetector's result debouncing and DetectionCleanup."""
 
+import datetime
 import multiprocessing
 import unittest
 from typing import Any
 
+from peewee import SqliteDatabase
+
 from swatch.config import SwatchConfig
-from swatch.detection import AutoDetector
+from swatch.detection import AutoDetector, DetectionCleanup
 from swatch.image import ImageProcessor
+from swatch.models import Detection
 from swatch.snapshot import SnapshotProcessor
 
 
@@ -144,6 +148,108 @@ class TestAutoDetectorDebounce(unittest.TestCase):
         detector = self._make_detector()
         detector.__debounce_results__(self._result(True))
         assert "test_cam.test_zone.test_obj" in detector.trackers
+
+
+class TestDetectionCleanup(unittest.TestCase):
+    """Testing DetectionCleanup.__cleanup_db__.
+
+    Regression coverage: Detection.delete().where(...) previously never
+    called .execute(), so retention silently deleted nothing for object
+    detections either -- there was no prior test to catch it.
+    """
+
+    def setUp(self) -> None:
+        self.db = SqliteDatabase(":memory:")
+        Detection.bind(self.db)
+        # Matches migrations/001_init_detection_table.py; end_time is
+        # nullable there, unlike Detection.create_table() from the bare
+        # model (see TestAudioMonitorDetectionHistory in test_audio.py).
+        self.db.execute_sql(
+            'CREATE TABLE IF NOT EXISTS "detection" ('
+            '"id" VARCHAR(30) NOT NULL PRIMARY KEY, "label" VARCHAR(20) NOT NULL, '
+            '"camera" VARCHAR(20) NOT NULL, "zone" VARCHAR(20) NOT NULL, '
+            '"color_variant" VARCHAR(20) NOT NULL, "start_time" DATETIME NOT NULL, '
+            '"end_time" DATETIME, "top_area" INTEGER NOT NULL)'
+        )
+
+        self.config_dict: dict[str, Any] = {
+            "objects": {
+                "test_obj": {
+                    "color_variants": {
+                        "default": {
+                            "color_lower": "1, 1, 1",
+                            "color_upper": "2, 2, 2",
+                        },
+                    },
+                },
+            },
+            "cameras": {
+                "test_cam": {
+                    "snapshot_config": {
+                        "url": "http://localhost/snap.jpg",
+                        "retain_days": 1,
+                    },
+                    "zones": {
+                        "test_zone": {
+                            "coordinates": "1, 2, 3, 4",
+                            "objects": ["test_obj"],
+                        },
+                    },
+                },
+            },
+            "audio_monitors": {
+                "kitchen_hood": {
+                    "rtsp_url": "unused",
+                    "retain_days": 1,
+                },
+            },
+        }
+
+    def tearDown(self) -> None:
+        self.db.drop_tables([Detection])
+        self.db.close()
+
+    def _create_detection(
+        self, detection_id: str, label: str, camera: str, days_ago: float
+    ) -> None:
+        start_time = (
+            datetime.datetime.now() - datetime.timedelta(days=days_ago)
+        ).timestamp()
+        Detection.create(
+            id=detection_id,
+            label=label,
+            camera=camera,
+            zone="",
+            color_variant="default",
+            start_time=start_time,
+            end_time=start_time + 1,
+            top_area=0,
+        )
+
+    def test_expired_camera_detections_are_deleted(self) -> None:
+        self._create_detection("old", "test_obj", "test_cam", days_ago=5)
+        self._create_detection("recent", "test_obj", "test_cam", days_ago=0)
+
+        swatch_config = SwatchConfig(**self.config_dict).runtime_config
+        cleanup = DetectionCleanup(swatch_config, multiprocessing.Event())
+        cleanup.__cleanup_db__()
+
+        remaining = {d.id for d in Detection.select()}
+        assert remaining == {"recent"}
+
+    def test_expired_audio_monitor_detections_are_deleted(self) -> None:
+        """audio_monitors' rows have no camera (see
+        AudioMonitor.__record_transition__), so they need their own
+        label-based cleanup pass rather than the camera-based one."""
+        self._create_detection("old_audio", "kitchen_hood", "", days_ago=5)
+        self._create_detection("recent_audio", "kitchen_hood", "", days_ago=0)
+
+        swatch_config = SwatchConfig(**self.config_dict).runtime_config
+        cleanup = DetectionCleanup(swatch_config, multiprocessing.Event())
+        cleanup.__cleanup_db__()
+
+        remaining = {d.id for d in Detection.select()}
+        assert remaining == {"recent_audio"}
 
 
 if __name__ == "__main__":
