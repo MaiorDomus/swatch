@@ -100,18 +100,25 @@ class _SettingsView extends StatelessWidget {
                     );
                   }
 
+                  const lineStyle = TextStyle(
+                    fontFamily: "monospace",
+                    fontSize: 13,
+                  );
+
                   return Card(
                     shape: const RoundedRectangleBorder(
                       borderRadius: BorderRadius.all(Radius.circular(8.0)),
                     ),
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(12.0),
-                      child: SelectableText.rich(
-                        highlightYaml(snapshot.data!),
-                        style: const TextStyle(
-                          fontFamily: "monospace",
-                          fontSize: 13,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: highlightYamlLines(snapshot.data!)
+                            .map((lineSpan) => SelectableText.rich(
+                                  lineSpan,
+                                  style: lineStyle,
+                                ))
+                            .toList(),
                       ),
                     ),
                   );

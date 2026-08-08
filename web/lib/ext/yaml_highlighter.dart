@@ -23,19 +23,25 @@ final _scalarValuePattern = RegExp(
   caseSensitive: false,
 );
 
-TextSpan highlightYaml(final String source) {
-  final lines = source.split('\n');
-  final children = <TextSpan>[];
-
-  for (var i = 0; i < lines.length; i++) {
-    children.addAll(_highlightLine(lines[i]));
-
-    if (i != lines.length - 1) {
-      children.add(const TextSpan(text: '\n'));
-    }
-  }
-
-  return TextSpan(children: children, style: const TextStyle(color: _plainColor));
+/// One TextSpan per source line, rather than a single combined tree for
+/// the whole file: SelectableText.rich on a very large multi-line span
+/// tree hits a known class of Flutter web selection/focus crash on the
+/// old Flutter version this project is pinned to (pubspec.yaml's Dart SDK
+/// constraint rules out anything newer) -- confirmed against a real
+/// deployment (selecting the highlighted text threw "can't access
+/// property 'focus', this.a.c is null"), and reproduced only after
+/// switching from a single plain SelectableText to SelectableText.rich
+/// with a large tree. Rendering one small SelectableText.rich per line
+/// keeps each span tree tiny and avoids it, at the cost of selection no
+/// longer dragging across line boundaries.
+List<TextSpan> highlightYamlLines(final String source) {
+  return source
+      .split('\n')
+      .map((line) => TextSpan(
+            children: _highlightLine(line),
+            style: const TextStyle(color: _plainColor),
+          ))
+      .toList();
 }
 
 List<TextSpan> _highlightLine(final String line) {
