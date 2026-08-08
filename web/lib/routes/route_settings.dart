@@ -1,6 +1,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:swatch/api/api.dart';
+import 'package:swatch/ext/yaml_highlighter.dart';
 
 import 'package:collapsible_sidebar/collapsible_sidebar.dart';
 import 'package:swatch/theme/theme_helper.dart';
@@ -105,8 +106,8 @@ class _SettingsView extends StatelessWidget {
                     ),
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(12.0),
-                      child: SelectableText(
-                        snapshot.data!,
+                      child: SelectableText.rich(
+                        highlightYaml(snapshot.data!),
                         style: const TextStyle(
                           fontFamily: "monospace",
                           fontSize: 13,
