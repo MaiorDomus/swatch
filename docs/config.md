@@ -115,6 +115,21 @@ frequency content moment to moment (changing phonemes/notes), which is what lets
 them apart. It won't be perfect -- a sustained drone in music could still trigger it -- so
 tune `threshold_db`/`max_spectral_flux` for your environment.
 
+The shape comparison only looks at frequencies at or below `flux_band_cutoff_hz`
+(default 500Hz). A hood fan's hum concentrates down there, while speech/music carries
+much more energy above it -- e.g. a podcast playing near the camera while the hood is
+running. Without this restriction, that higher-frequency content can dominate the
+shape comparison each window and mask the fan running underneath it. Set it to `null`
+to compare the full spectrum instead.
+
+`min_band_energy_ratio` (default 0.02) guards against a subtler failure of that same
+cutoff: a loud sound with almost none of its real energy below the cutoff can still
+leak a tiny amount in there (FFT windowing sidelobes), and since the shape comparison
+force-normalizes whatever survives the cutoff to unit norm, that negligible leakage can
+otherwise look like a perfectly steady hum. This requires a real fraction of a window's
+total energy to actually sit below the cutoff before its shape is trusted at all --
+only relevant when `flux_band_cutoff_hz` is set.
+
 Tested live against a real UniFi G6 Instant with its RTSP audio alias enabled, pointed at
 a kitchen hood fan, with both the fan on and off:
 
@@ -158,6 +173,17 @@ audio_monitors:
     # windows, roughly 0-1) for a window to be considered steady/mechanical rather than
     # speech or music (Default: shown below).
     max_spectral_flux: 0.15
+    # OPTIONAL: Only compare spectral shape at or below this frequency (Hz) when
+    # computing flux, instead of the full spectrum -- keeps higher-frequency content
+    # (e.g. a podcast playing near the camera) from masking the fan's low-frequency
+    # hum. Set to null to compare the full spectrum instead (Default: shown below).
+    flux_band_cutoff_hz: 500.0
+    # OPTIONAL: Minimum fraction (0-1) of a window's total energy that must fall at or
+    # below flux_band_cutoff_hz before its spectral shape is trusted -- guards against
+    # a loud sound whose FFT windowing leakage below the cutoff can otherwise look like
+    # a steady hum once normalized. Only applies when flux_band_cutoff_hz is set
+    # (Default: shown below).
+    min_band_energy_ratio: 0.02
     # OPTIONAL: How long loud + steady audio must be sustained before switching on,
     # in seconds (Default: shown below).
     min_on_seconds: 5.0

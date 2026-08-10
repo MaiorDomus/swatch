@@ -169,6 +169,30 @@ class AudioMonitorConfig(SwatchBaseModel):
         ),
         default=0.15,
     )
+    flux_band_cutoff_hz: float | None = Field(
+        title=(
+            "Only compare spectral shape at or below this frequency (Hz) when "
+            "computing flux, instead of the full spectrum. A hood fan's hum "
+            "concentrates in low frequencies, while speech/music -- e.g. a podcast "
+            "playing near the camera -- carries much more energy above it; without "
+            "this, that higher-frequency content can dominate the shape comparison "
+            "and mask a real fan running underneath it. Set to None to compare the "
+            "full spectrum instead."
+        ),
+        default=500.0,
+    )
+    min_band_energy_ratio: float = Field(
+        title=(
+            "Minimum fraction (0-1) of a window's total energy that must fall at "
+            "or below flux_band_cutoff_hz before its spectral shape is trusted at "
+            "all. Only applies when flux_band_cutoff_hz is set: a loud sound with "
+            "almost none of its real energy down there can still leak a tiny "
+            "amount in (FFT windowing sidelobes), and since the shape comparison "
+            "force-normalizes whatever survives the cutoff to unit norm, that "
+            "negligible leakage can otherwise look like a perfectly steady hum."
+        ),
+        default=0.02,
+    )
     min_on_seconds: float = Field(
         title="How long loud + steady audio must be sustained before switching on.",
         default=5.0,

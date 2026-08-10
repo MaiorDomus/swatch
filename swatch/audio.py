@@ -49,7 +49,10 @@ SPECTRUM_BANDS = 32
 
 
 def compute_normalized_spectrum(
-    samples: np.ndarray, bands: int = SPECTRUM_BANDS
+    samples: np.ndarray,
+    bands: int = SPECTRUM_BANDS,
+    sample_rate: int | None = None,
+    cutoff_hz: float | None = None,
 ) -> np.ndarray:
     """Compute a unit-norm, coarsely-banded magnitude spectrum, so spectral
     flux measures changes in broad spectral *shape* rather than bin-by-bin
@@ -58,19 +61,73 @@ def compute_normalized_spectrum(
     though its overall shape is stable, so comparing raw per-bin magnitudes
     would make steady noise look "unsteady". Averaging into a handful of
     bands smooths that jitter out while still catching real shape changes
-    (like speech moving between phonemes, or music changing notes)."""
+    (like speech moving between phonemes, or music changing notes).
+
+    cutoff_hz (with sample_rate to interpret it) zeroes out bins above that
+    frequency before banding, so the resulting shape -- and thus flux --
+    only reflects low-frequency content. A hood fan's hum concentrates
+    there, while speech/music (e.g. a podcast playing near the camera)
+    carries much more energy above it; without this, that higher content
+    dominates the shape comparison and can mask a real fan running
+    underneath it. Zeroing bins in place (rather than dropping them and
+    shrinking the array) keeps each remaining band's bin count -- and thus
+    its bin-jitter smoothing -- the same as the no-cutoff case; shrinking
+    the array first would concentrate the same `bands` count into far fewer
+    bins, making even steady broadband noise look unsteady again."""
     if samples.size == 0:
         return np.zeros(1)
 
     windowed = samples.astype(np.float64) * np.hanning(len(samples))
     magnitude = np.abs(np.fft.rfft(windowed))
-    banded = np.array([band.mean() for band in np.array_split(magnitude, bands)])
+
+    if cutoff_hz is not None:
+        assert sample_rate is not None
+        freqs = np.fft.rfftfreq(len(samples), d=1.0 / sample_rate)
+        magnitude = np.where(freqs <= cutoff_hz, magnitude, 0.0)
+
+    # band.mean() of an empty slice (magnitude shorter than bands) would
+    # silently produce nan and poison the whole normalized vector -- treat
+    # those bands as having no energy.
+    banded = np.array(
+        [
+            band.mean() if band.size > 0 else 0.0
+            for band in np.array_split(magnitude, bands)
+        ]
+    )
     norm = float(np.linalg.norm(banded))
 
     if norm == 0:
         return banded
 
     return banded / norm
+
+
+def compute_low_band_energy_ratio(
+    samples: np.ndarray, sample_rate: int, cutoff_hz: float
+) -> float:
+    """Fraction of this window's total FFT magnitude that falls at or below
+    cutoff_hz. Pairs with cutoff_hz in compute_normalized_spectrum: a loud
+    sound with (almost) none of its real energy below cutoff_hz still leaks
+    a tiny amount there via FFT windowing sidelobes, and since
+    compute_normalized_spectrum force-normalizes whatever survives the
+    cutoff to unit norm, that negligible leakage can look like a
+    perfectly steady low-frequency shape from one window to the next --
+    flux alone can't tell a genuine hum from noise-floor leakage that
+    happens to decay the same way each window. This ratio measures how much
+    of the window's energy is actually down there before trusting that
+    shape at all."""
+    if samples.size == 0:
+        return 0.0
+
+    windowed = samples.astype(np.float64) * np.hanning(len(samples))
+    magnitude = np.abs(np.fft.rfft(windowed))
+    total = float(magnitude.sum())
+
+    if total == 0:
+        return 0.0
+
+    freqs = np.fft.rfftfreq(len(samples), d=1.0 / sample_rate)
+    return float(magnitude[freqs <= cutoff_hz].sum()) / total
 
 
 def compute_spectral_flux(
@@ -229,7 +286,11 @@ class AudioMonitor(threading.Thread):
 
                 samples = np.frombuffer(raw, dtype=np.int16)
                 loudness_db = compute_rms_dbfs(samples)
-                curr_spectrum = compute_normalized_spectrum(samples)
+                curr_spectrum = compute_normalized_spectrum(
+                    samples,
+                    sample_rate=self.config.sample_rate,
+                    cutoff_hz=self.config.flux_band_cutoff_hz,
+                )
 
                 flux = (
                     compute_spectral_flux(prev_spectrum, curr_spectrum)
@@ -238,8 +299,24 @@ class AudioMonitor(threading.Thread):
                 )
                 prev_spectrum = curr_spectrum
 
+                # With flux_band_cutoff_hz set, a loud sound with (almost)
+                # none of its real energy below the cutoff can still leak
+                # enough there (FFT windowing sidelobes) to look like a
+                # steady low-frequency shape once force-normalized to unit
+                # norm -- require a real share of this window's energy to
+                # actually be down there before trusting that shape.
+                has_band_energy = (
+                    compute_low_band_energy_ratio(
+                        samples, self.config.sample_rate, self.config.flux_band_cutoff_hz
+                    )
+                    >= self.config.min_band_energy_ratio
+                    if self.config.flux_band_cutoff_hz is not None
+                    else True
+                )
+
                 is_candidate = (
                     loudness_db >= self.config.threshold_db
+                    and has_band_energy
                     and flux <= self.config.max_spectral_flux
                 )
                 self.is_on = self._classifier.update(is_candidate)
