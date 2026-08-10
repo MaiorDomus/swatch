@@ -122,13 +122,16 @@ running. Without this restriction, that higher-frequency content can dominate th
 shape comparison each window and mask the fan running underneath it. Set it to `null`
 to compare the full spectrum instead.
 
-`min_band_energy_ratio` (default 0.02) guards against a subtler failure of that same
+`min_band_energy_ratio` (default 0.08) guards against a subtler failure of that same
 cutoff: a loud sound with almost none of its real energy below the cutoff can still
 leak a tiny amount in there (FFT windowing sidelobes), and since the shape comparison
 force-normalizes whatever survives the cutoff to unit norm, that negligible leakage can
 otherwise look like a perfectly steady hum. This requires a real fraction of a window's
 total energy to actually sit below the cutoff before its shape is trusted at all --
-only relevant when `flux_band_cutoff_hz` is set.
+only relevant when `flux_band_cutoff_hz` is set. Tested live with `flux_band_cutoff_hz`
+at its default: 0.02 was too permissive and let a podcast playing near the camera, with
+the hood off, sustain enough incidental low-band energy to read as the hood running;
+0.05-0.10 correctly rejected it while still catching the hood.
 
 Tested live against a real UniFi G6 Instant with its RTSP audio alias enabled, pointed at
 a kitchen hood fan, with both the fan on and off:
@@ -183,7 +186,7 @@ audio_monitors:
     # a loud sound whose FFT windowing leakage below the cutoff can otherwise look like
     # a steady hum once normalized. Only applies when flux_band_cutoff_hz is set
     # (Default: shown below).
-    min_band_energy_ratio: 0.02
+    min_band_energy_ratio: 0.08
     # OPTIONAL: How long loud + steady audio must be sustained before switching on,
     # in seconds (Default: shown below).
     min_on_seconds: 5.0

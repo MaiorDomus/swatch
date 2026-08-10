@@ -189,9 +189,14 @@ class AudioMonitorConfig(SwatchBaseModel):
             "almost none of its real energy down there can still leak a tiny "
             "amount in (FFT windowing sidelobes), and since the shape comparison "
             "force-normalizes whatever survives the cutoff to unit norm, that "
-            "negligible leakage can otherwise look like a perfectly steady hum."
+            "negligible leakage can otherwise look like a perfectly steady hum. "
+            "Tested live against a real UniFi camera with flux_band_cutoff_hz=500: "
+            "0.02 was too permissive and let a podcast playing near the camera "
+            "(with the hood off) sustain enough incidental low-band energy to "
+            "read as the hood running -- 0.05-0.10 correctly rejected it while "
+            "still catching the hood."
         ),
-        default=0.02,
+        default=0.08,
     )
     min_on_seconds: float = Field(
         title="How long loud + steady audio must be sustained before switching on.",
