@@ -84,7 +84,7 @@ class TransitionHistoryComponent extends StatelessWidget {
   Widget _buildTable(final List<_TransitionEvent> events) {
     const headerStyle = TextStyle(fontWeight: FontWeight.bold);
     const cellPadding = EdgeInsets.symmetric(vertical: 4.0, horizontal: 4.0);
-    final format = DateFormat("MM/dd hh:mm:ss a");
+    final format = DateFormat("MM/dd HH:mm:ss");
 
     return Table(
       columnWidths: const {
