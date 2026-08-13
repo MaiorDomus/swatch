@@ -252,5 +252,85 @@ class TestDetectionCleanup(unittest.TestCase):
         assert remaining == {"recent_audio"}
 
 
+class TestAutoDetectorRunLoopResilience(unittest.TestCase):
+    """AutoDetector.run()'s loop must survive an unexpected exception from a
+    single detection cycle (e.g. a snapshot fetch failure) rather than
+    silently ending the thread -- see swatch/image.py's fetch_snapshot_bytes,
+    which is what used to let a bare network exception propagate all the way
+    out of this loop."""
+
+    def setUp(self) -> None:
+        self.db = SqliteDatabase(":memory:")
+        Detection.bind(self.db)
+        self.db.execute_sql(
+            'CREATE TABLE IF NOT EXISTS "detection" ('
+            '"id" VARCHAR(30) NOT NULL PRIMARY KEY, "label" VARCHAR(20) NOT NULL, '
+            '"camera" VARCHAR(20) NOT NULL, "zone" VARCHAR(20) NOT NULL, '
+            '"color_variant" VARCHAR(20) NOT NULL, "start_time" DATETIME NOT NULL, '
+            '"end_time" DATETIME, "top_area" INTEGER NOT NULL)'
+        )
+
+        self.config_dict: dict[str, Any] = {
+            "objects": {
+                "test_obj": {
+                    "color_variants": {
+                        "default": {
+                            "color_lower": "1, 1, 1",
+                            "color_upper": "2, 2, 2",
+                        },
+                    },
+                },
+            },
+            "cameras": {
+                "test_cam": {
+                    # 0 makes stop_event.wait(0) return immediately each
+                    # iteration instead of blocking, so the test doesn't
+                    # depend on real wall-clock time.
+                    "auto_detect": 0,
+                    "snapshot_config": {"url": "http://localhost/snap.jpg"},
+                    "zones": {
+                        "test_zone": {
+                            "coordinates": "1, 2, 3, 4",
+                            "objects": ["test_obj"],
+                        },
+                    },
+                },
+            },
+        }
+
+    def tearDown(self) -> None:
+        self.db.drop_tables([Detection])
+        self.db.close()
+
+    def test_run_survives_an_exception_and_keeps_polling(self) -> None:
+        swatch_config = SwatchConfig(**self.config_dict).runtime_config
+        snapshot_processor = SnapshotProcessor(swatch_config)
+        image_processor = ImageProcessor(swatch_config, snapshot_processor)
+        camera_config = swatch_config.cameras["test_cam"]
+        stop_event = multiprocessing.Event()
+        detector = AutoDetector(
+            image_processor, snapshot_processor, camera_config, stop_event
+        )
+
+        call_count = 0
+
+        def fake_detect(camera_name: str, image_url: str) -> dict[str, Any]:
+            nonlocal call_count
+            call_count += 1
+
+            if call_count == 1:
+                raise RuntimeError("simulated snapshot fetch failure")
+
+            # stop after the second (successful) cycle so run() returns
+            stop_event.set()
+            return {}
+
+        image_processor.detect = fake_detect  # type: ignore[method-assign]
+
+        detector.run()
+
+        assert call_count == 2
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,12 +2,20 @@
 
 import string
 import unittest
+from unittest.mock import Mock, patch
 
 import cv2
 import numpy as np
+import requests
 
 from swatch.config import ColorVariantConfig, ObjectConfig
-from swatch.util import compute_solidity, detect_objects, get_random_suffix, mask_image
+from swatch.util import (
+    compute_solidity,
+    detect_objects,
+    fetch_snapshot_bytes,
+    get_random_suffix,
+    mask_image,
+)
 
 
 class TestMaskImage(unittest.TestCase):
@@ -185,6 +193,54 @@ class TestGetRandomSuffix(unittest.TestCase):
         # extremely unlikely to collide 20 times in a row if truly random
         suffixes = {get_random_suffix() for _ in range(20)}
         assert len(suffixes) > 1
+
+
+class TestFetchSnapshotBytes(unittest.TestCase):
+    """Testing fetch_snapshot_bytes returns None (rather than raising) on any
+    network error, timeout, or non-2xx response."""
+
+    def test_successful_fetch_returns_content(self) -> None:
+        response = Mock()
+        response.content = b"jpegbytes"
+        response.raise_for_status = Mock()
+
+        with patch("swatch.util.requests.get", return_value=response) as mock_get:
+            result = fetch_snapshot_bytes("http://example.com/snap.jpg")
+
+        assert result == b"jpegbytes"
+        mock_get.assert_called_once_with("http://example.com/snap.jpg", timeout=10.0)
+
+    def test_connection_error_returns_none(self) -> None:
+        with patch(
+            "swatch.util.requests.get",
+            side_effect=requests.exceptions.ConnectionError("refused"),
+        ):
+            assert fetch_snapshot_bytes("http://example.com/snap.jpg") is None
+
+    def test_timeout_returns_none(self) -> None:
+        with patch(
+            "swatch.util.requests.get",
+            side_effect=requests.exceptions.Timeout("timed out"),
+        ):
+            assert fetch_snapshot_bytes("http://example.com/snap.jpg") is None
+
+    def test_non_200_status_returns_none(self) -> None:
+        response = Mock()
+        response.raise_for_status = Mock(
+            side_effect=requests.exceptions.HTTPError("500 error")
+        )
+
+        with patch("swatch.util.requests.get", return_value=response):
+            assert fetch_snapshot_bytes("http://example.com/snap.jpg") is None
+
+    def test_passes_through_custom_timeout(self) -> None:
+        response = Mock()
+        response.content = b"jpegbytes"
+
+        with patch("swatch.util.requests.get", return_value=response) as mock_get:
+            fetch_snapshot_bytes("http://example.com/snap.jpg", timeout=2.0)
+
+        mock_get.assert_called_once_with("http://example.com/snap.jpg", timeout=2.0)
 
 
 if __name__ == "__main__":

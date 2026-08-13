@@ -4,7 +4,13 @@ import unittest
 
 from pydantic import ValidationError
 
-from swatch.config import AudioMonitorConfig, CameraConfig, SnapshotConfig, SwatchConfig
+from swatch.config import (
+    AudioMonitorConfig,
+    CameraConfig,
+    ColorVariantConfig,
+    SnapshotConfig,
+    SwatchConfig,
+)
 
 
 class TestConfig(unittest.TestCase):
@@ -153,3 +159,39 @@ class TestConfig(unittest.TestCase):
         assert monitor.rtsp_url == "rtsps://192.168.1.1:7441/abc"
         assert monitor.threshold_db == -20.0
         assert monitor.min_on_seconds == 3.0
+
+
+class TestColorVariantGeometryOverrides(unittest.TestCase):
+    """A color_variant can optionally override its object's geometry
+    thresholds (e.g. a night variant needing a larger max_area than the day
+    variant for the same physical light, since camera exposure/gain changes
+    how large it blooms in-frame)."""
+
+    def test_overrides_default_to_none(self) -> None:
+        """By default a variant has no geometry overrides -- the object's
+        thresholds apply unchanged."""
+        variant = ColorVariantConfig(color_lower="1, 1, 1", color_upper="2, 2, 2")
+        assert variant.min_area is None
+        assert variant.max_area is None
+        assert variant.min_ratio is None
+        assert variant.max_ratio is None
+        assert variant.min_solidity is None
+        assert variant.max_solidity is None
+
+    def test_explicit_overrides_are_preserved(self) -> None:
+        variant = ColorVariantConfig(
+            color_lower="1, 1, 1",
+            color_upper="2, 2, 2",
+            min_area=45,
+            max_area=3000,
+            min_ratio=0.5,
+            max_ratio=5.0,
+            min_solidity=0.6,
+            max_solidity=1.1,
+        )
+        assert variant.min_area == 45
+        assert variant.max_area == 3000
+        assert variant.min_ratio == 0.5
+        assert variant.max_ratio == 5.0
+        assert variant.min_solidity == 0.6
+        assert variant.max_solidity == 1.1

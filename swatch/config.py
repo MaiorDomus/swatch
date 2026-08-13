@@ -62,6 +62,30 @@ class ColorVariantConfig(SwatchBaseModel):
     time_range: TimeRangeConfig = Field(
         title="Valid time range for this config.", default_factory=TimeRangeConfig
     )
+    min_area: int | None = Field(
+        title="Overrides the object's min_area when this variant matches.",
+        default=None,
+    )
+    max_area: int | None = Field(
+        title="Overrides the object's max_area when this variant matches.",
+        default=None,
+    )
+    min_ratio: float | None = Field(
+        title="Overrides the object's min_ratio when this variant matches.",
+        default=None,
+    )
+    max_ratio: float | None = Field(
+        title="Overrides the object's max_ratio when this variant matches.",
+        default=None,
+    )
+    min_solidity: float | None = Field(
+        title="Overrides the object's min_solidity when this variant matches.",
+        default=None,
+    )
+    max_solidity: float | None = Field(
+        title="Overrides the object's max_solidity when this variant matches.",
+        default=None,
+    )
 
 
 class ObjectConfig(SwatchBaseModel):

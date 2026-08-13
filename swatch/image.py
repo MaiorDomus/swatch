@@ -6,9 +6,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-import requests
-
-from swatch.util import detect_objects, mask_image
+from swatch.util import detect_objects, fetch_snapshot_bytes, mask_image
 from swatch.config import ObjectConfig, SnapshotModeEnum, SwatchConfig
 from swatch.snapshot import SnapshotProcessor
 
@@ -51,15 +49,44 @@ class ImageProcessor:
 
         for variant_name, color_variant in obj_config.color_variants.items():
             now_time = datetime.datetime.now().strftime("%H:%M")
+            after, before = (
+                color_variant.time_range.after,
+                color_variant.time_range.before,
+            )
+            # after > before means the window spans midnight (e.g. 22:00-06:00):
+            # valid outside the [before, after) gap rather than inside [after, before].
+            in_range = (
+                after <= now_time <= before
+                if after <= before
+                else now_time >= after or now_time <= before
+            )
 
-            if (
-                now_time < color_variant.time_range.after
-                or now_time > color_variant.time_range.before
-            ):
+            if not in_range:
                 continue
 
+            # A variant can override the object's geometry thresholds (e.g. a
+            # night variant needs a larger max_area than the day variant for
+            # the same physical light, since camera exposure/gain changes how
+            # large it blooms in-frame) -- fall back to the object default for
+            # any threshold the variant doesn't override.
+            overrides = {
+                field: value
+                for field in (
+                    "min_area",
+                    "max_area",
+                    "min_ratio",
+                    "max_ratio",
+                    "min_solidity",
+                    "max_solidity",
+                )
+                if (value := getattr(color_variant, field)) is not None
+            }
+            effective_obj_config = (
+                obj_config.model_copy(update=overrides) if overrides else obj_config
+            )
+
             mask, matches = mask_image(crop, color_variant)
-            detected_objects = detect_objects(mask, obj_config)
+            detected_objects = detect_objects(mask, effective_obj_config)
 
             if detected_objects:
                 # draw bounding boxes on image if enabled
@@ -128,7 +155,7 @@ class ImageProcessor:
 
         for zone_name, zone in camera_config.zones.items():
             response[zone_name] = {}
-            img_bytes = requests.get(image_url).content
+            img_bytes = fetch_snapshot_bytes(image_url)
 
             if img_bytes is None:
                 continue

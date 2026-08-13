@@ -1,5 +1,6 @@
 """Utilities and convenience funs."""
 
+import logging
 import random
 import string
 from typing import Any
@@ -7,10 +8,28 @@ from typing import Any
 from colorthief import ColorThief
 import cv2
 import numpy as np
+import requests
 
 from swatch.config import ColorVariantConfig, ObjectConfig
 
+logger = logging.getLogger(__name__)
+
 ### Image utils
+
+
+def fetch_snapshot_bytes(url: str, timeout: float = 10.0) -> bytes | None:
+    """Fetch raw snapshot bytes from a camera URL. Returns None (and logs) on
+    any network error, timeout, or non-2xx response, instead of raising and
+    silently killing the caller's polling loop/thread."""
+    try:
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        logger.warning("Failed to fetch snapshot from %s: %s", url, exc)
+        return None
+
+    return response.content
+
 
 # Kernel for the morphological closing in detect_objects(). 3x3 is enough to
 # bridge single-pixel gaps in a small/noisy blob without merging distinct

@@ -4,7 +4,6 @@ import datetime
 import logging
 import multiprocessing
 import os
-import requests
 import shutil
 import threading
 from typing import Any
@@ -16,6 +15,7 @@ from numpy import ndarray
 from swatch.config import SwatchConfig, CameraConfig
 from swatch.const import CONST_MEDIA_DIR
 from swatch.models import Detection
+from swatch.util import fetch_snapshot_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +67,7 @@ class SnapshotProcessor:
             if url is None:
                 return False
 
-            try:
-                img_bytes = requests.get(url).content
-            except ConnectionError:
-                img_bytes = None
+            img_bytes = fetch_snapshot_bytes(url)
 
             if img_bytes is None:
                 return False
@@ -119,10 +116,7 @@ class SnapshotProcessor:
         if url is None:
             return False
 
-        try:
-            img_bytes = requests.get(url).content
-        except ConnectionError:
-            img_bytes = None
+        img_bytes = fetch_snapshot_bytes(url)
 
         if img_bytes is None:
             return False
@@ -197,10 +191,7 @@ class SnapshotProcessor:
         if url is None:
             return None
 
-        try:
-            img_bytes = requests.get(url).content
-        except ConnectionError:
-            img_bytes = None
+        img_bytes = fetch_snapshot_bytes(url)
 
         if img_bytes is None:
             return None
@@ -225,10 +216,7 @@ class SnapshotProcessor:
         if url is None:
             return None
 
-        try:
-            img_bytes = requests.get(url).content
-        except ConnectionError:
-            img_bytes = None
+        img_bytes = fetch_snapshot_bytes(url)
 
         if not img_bytes:
             return None

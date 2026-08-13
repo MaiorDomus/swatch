@@ -23,11 +23,21 @@ objects:
         color_upper: 110, 100, 50
         # OPTIONAL: the time range for when this color variant is allowed
         # NOTE: make sure that /etc/localtime is passed to the container so it has valid time
+        # NOTE: if `after` is later than `before` (e.g. after: "22:00", before: "06:00"),
+        # the window is treated as spanning midnight -- valid outside [before, after)
+        # rather than inside [after, before].
         time_range:
           # OPTIONAL: Color variant is valid if current time is > this 24H time (Default: shown below).
           after: "00:00"
           # OPTIONAL: Color variant is valid if current time is < this 24H time (Default: shown below).
           before: "24:00"
+        # OPTIONAL: any of min_area, max_area, min_ratio, max_ratio, min_solidity,
+        # max_solidity may also be set here to override the object's default for this
+        # variant specifically (default: unset, i.e. use the object's value). Useful
+        # when the same physical object looks a different size/shape by variant --
+        # e.g. a light that blooms larger in-frame at night than during the day due
+        # to camera exposure/gain, needing a bigger max_area for a night-time variant
+        # than for a daytime one.
     # OPTIONAL: the min area of the bounding box around groups of matching R, G, B pixels
     # considered a true positive. This is not recommended to be set as a super small amount
     # could be a false positive. (Default: shown below)

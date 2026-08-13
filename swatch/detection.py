@@ -161,11 +161,16 @@ class AutoDetector(threading.Thread):
         logger.info("Starting Auto Detection for %s", self.camera_name)
 
         while not self.stop_event.wait(self.config.auto_detect):
-            result: dict[str, Any] = self.image_processor.detect(
-                self.camera_name, self.snapshot_url
-            )
-            self.__debounce_results__(result)
-            self.__handle_detections__(result)
+            try:
+                result: dict[str, Any] = self.image_processor.detect(
+                    self.camera_name, self.snapshot_url
+                )
+                self.__debounce_results__(result)
+                self.__handle_detections__(result)
+            except Exception:
+                logger.exception(
+                    "Unexpected error during detection for %s", self.camera_name
+                )
 
         # ensure db doesn't contain bad data after shutdown
         Detection.update(end_time=datetime.datetime.now().timestamp()).where(
