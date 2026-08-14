@@ -245,7 +245,7 @@ class _AdjustColorValuesState extends State<_AdjustColorValues> {
                               ),
                             ),
                             Text(
-                              "$_lowRed",
+                              "${_lowRed.toInt()}",
                               style: TextStyle(color: Colors.red[700]),
                             ),
                           ],
@@ -267,7 +267,7 @@ class _AdjustColorValuesState extends State<_AdjustColorValues> {
                               ),
                             ),
                             Text(
-                              "$_lowGreen",
+                              "${_lowGreen.toInt()}",
                               style: TextStyle(color: Colors.green[700]),
                             ),
                           ],
@@ -287,7 +287,7 @@ class _AdjustColorValuesState extends State<_AdjustColorValues> {
                               ),
                             ),
                             Text(
-                              "$_lowBlue",
+                              "${_lowBlue.toInt()}",
                               style: TextStyle(color: Colors.blue[700]),
                             ),
                           ],
@@ -318,7 +318,7 @@ class _AdjustColorValuesState extends State<_AdjustColorValues> {
                               ),
                             ),
                             Text(
-                              "$_upRed",
+                              "${_upRed.toInt()}",
                               style: TextStyle(color: Colors.red[700]),
                             ),
                           ],
@@ -339,7 +339,7 @@ class _AdjustColorValuesState extends State<_AdjustColorValues> {
                               ),
                             ),
                             Text(
-                              "$_upGreen",
+                              "${_upGreen.toInt()}",
                               style: TextStyle(color: Colors.green[700]),
                             ),
                           ],
@@ -358,7 +358,7 @@ class _AdjustColorValuesState extends State<_AdjustColorValues> {
                               ),
                             ),
                             Text(
-                              "$_upBlue",
+                              "${_upBlue.toInt()}",
                               style: TextStyle(color: Colors.blue[700]),
                             ),
                           ],
@@ -377,7 +377,7 @@ class _AdjustColorValuesState extends State<_AdjustColorValues> {
                           textAlign: TextAlign.center,
                         ),
                         SelectableText(
-                          "color_variants:\n  name_of_variant:\n    color_lower: $_lowRed, $_lowGreen, $_lowBlue\n    color_upper: $_upRed, $_upGreen, $_upBlue",
+                          "color_variants:\n  name_of_variant:\n    color_lower: ${_lowRed.toInt()}, ${_lowGreen.toInt()}, ${_lowBlue.toInt()}\n    color_upper: ${_upRed.toInt()}, ${_upGreen.toInt()}, ${_upBlue.toInt()}",
                           textAlign: TextAlign.start,
                           style: const TextStyle(fontSize: 16.0),
                         ),
@@ -420,8 +420,10 @@ class _AdjustColorValuesState extends State<_AdjustColorValues> {
   }
 
   void _updateMask() async {
-    final maskBytes = await _api.testImageMask(_cleanImage,
-        "$_lowRed, $_lowGreen, $_lowBlue", "$_upRed, $_upGreen, $_upBlue");
+    final maskBytes = await _api.testImageMask(
+        _cleanImage,
+        "${_lowRed.toInt()}, ${_lowGreen.toInt()}, ${_lowBlue.toInt()}",
+        "${_upRed.toInt()}, ${_upGreen.toInt()}, ${_upBlue.toInt()}");
     setState(() => _maskImage = maskBytes);
   }
 }

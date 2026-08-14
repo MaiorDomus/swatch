@@ -100,19 +100,6 @@ class SwatchApi {
     }
   }
 
-  Future<Config> getLatest() async {
-    const base = "/api/all/latest";
-    final response = await http.get(_apiUri(base)).timeout(
-          const Duration(seconds: 15),
-        );
-
-    if (response.statusCode == 200) {
-      return Config(json.decode(response.body));
-    } else {
-      return Config.template();
-    }
-  }
-
   Future<Map<String, dynamic>> getLatestForLabel(final String label) async {
     final base = "/api/$label/latest";
     final response = await http.get(_apiUri(base)).timeout(

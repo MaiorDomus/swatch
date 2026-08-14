@@ -20,6 +20,34 @@ from swatch.util import fetch_snapshot_bytes
 logger = logging.getLogger(__name__)
 
 
+def _most_recent_occurrence(
+    now: datetime.datetime, month: int, day: int
+) -> datetime.datetime | None:
+    """Most recent midnight on or before `now` that falls on `month`/`day`.
+
+    Snapshot dirs are named "MM-DD" with no year, so the year has to be
+    inferred. Walking back up to 5 years (rather than just trying now.year,
+    then now.year - 1) is needed for "02-29": that's only valid in leap
+    years, so a Feb 29 dir needs to search back until it hits one.
+    """
+    for years_back in range(5):
+        try:
+            candidate = now.replace(
+                year=now.year - years_back,
+                month=month,
+                day=day,
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+        except ValueError:
+            continue
+        if candidate <= now:
+            return candidate
+    return None
+
+
 def delete_dir(date_dir: str, camera_name: str) -> None:
     """Deletes a date and camera dir"""
     file_path = f"{date_dir}/{camera_name}"
@@ -283,28 +311,25 @@ class SnapshotCleanup(threading.Thread):
             # nothing has been saved yet, so there's nothing to clean up
             return
 
-        retain_days_ago = datetime.datetime.now() - datetime.timedelta(
-            days=camera_config.snapshot_config.retain_days
-        )
-        valid_month, _, valid_day = retain_days_ago.strftime("%m-%d").partition("-")
+        now = datetime.datetime.now()
+        retain_days = camera_config.snapshot_config.retain_days
 
         for snap_dir in os.listdir(f"{self.media_dir}/snapshots/"):
-            if not os.path.isdir(
-                os.path.join(f"{self.media_dir}/snapshots/", snap_dir)
-            ):
+            dir_path = os.path.join(f"{self.media_dir}/snapshots/", snap_dir)
+            if not os.path.isdir(dir_path):
                 continue
 
-            # delete if older than last valid
-            month, _, day = str(snap_dir).partition("-")
+            try:
+                month, day = (int(part) for part in str(snap_dir).split("-"))
+            except ValueError:
+                continue
 
-            if month == valid_month and valid_day >= day:
-                delete_dir(
-                    f"{self.media_dir}/snapshots/{month}-{day}", camera_config.name
-                )
-            elif valid_month > month and (int(day) - int(valid_day)) <= 24:
-                delete_dir(
-                    f"{self.media_dir}/snapshots/{month}-{day}", camera_config.name
-                )
+            snap_date = _most_recent_occurrence(now, month, day)
+            if snap_date is None:
+                continue
+
+            if (now - snap_date).days >= retain_days:
+                delete_dir(dir_path, camera_config.name)
 
     def run(self) -> None:
         """Run snapshot cleanup"""

@@ -48,11 +48,21 @@ def compute_rms_dbfs(samples: np.ndarray) -> float:
 SPECTRUM_BANDS = 32
 
 
+def compute_fft_magnitude(samples: np.ndarray) -> np.ndarray:
+    """Windowed FFT magnitude, shared by compute_normalized_spectrum and
+    compute_low_band_energy_ratio so callers that need both (like
+    AudioMonitor._process_stream) can compute it once per window instead of
+    twice."""
+    windowed = samples.astype(np.float64) * np.hanning(len(samples))
+    return np.abs(np.fft.rfft(windowed))
+
+
 def compute_normalized_spectrum(
     samples: np.ndarray,
     bands: int = SPECTRUM_BANDS,
     sample_rate: int | None = None,
     cutoff_hz: float | None = None,
+    magnitude: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute a unit-norm, coarsely-banded magnitude spectrum, so spectral
     flux measures changes in broad spectral *shape* rather than bin-by-bin
@@ -77,8 +87,8 @@ def compute_normalized_spectrum(
     if samples.size == 0:
         return np.zeros(1)
 
-    windowed = samples.astype(np.float64) * np.hanning(len(samples))
-    magnitude = np.abs(np.fft.rfft(windowed))
+    if magnitude is None:
+        magnitude = compute_fft_magnitude(samples)
 
     if cutoff_hz is not None:
         assert sample_rate is not None
@@ -103,7 +113,10 @@ def compute_normalized_spectrum(
 
 
 def compute_low_band_energy_ratio(
-    samples: np.ndarray, sample_rate: int, cutoff_hz: float
+    samples: np.ndarray,
+    sample_rate: int,
+    cutoff_hz: float,
+    magnitude: np.ndarray | None = None,
 ) -> float:
     """Fraction of this window's total FFT magnitude that falls at or below
     cutoff_hz. Pairs with cutoff_hz in compute_normalized_spectrum: a loud
@@ -119,8 +132,8 @@ def compute_low_band_energy_ratio(
     if samples.size == 0:
         return 0.0
 
-    windowed = samples.astype(np.float64) * np.hanning(len(samples))
-    magnitude = np.abs(np.fft.rfft(windowed))
+    if magnitude is None:
+        magnitude = compute_fft_magnitude(samples)
     total = float(magnitude.sum())
 
     if total == 0:
@@ -286,10 +299,14 @@ class AudioMonitor(threading.Thread):
 
                 samples = np.frombuffer(raw, dtype=np.int16)
                 loudness_db = compute_rms_dbfs(samples)
+                magnitude = (
+                    compute_fft_magnitude(samples) if samples.size > 0 else None
+                )
                 curr_spectrum = compute_normalized_spectrum(
                     samples,
                     sample_rate=self.config.sample_rate,
                     cutoff_hz=self.config.flux_band_cutoff_hz,
+                    magnitude=magnitude,
                 )
 
                 flux = (
@@ -307,7 +324,10 @@ class AudioMonitor(threading.Thread):
                 # actually be down there before trusting that shape.
                 has_band_energy = (
                     compute_low_band_energy_ratio(
-                        samples, self.config.sample_rate, self.config.flux_band_cutoff_hz
+                        samples,
+                        self.config.sample_rate,
+                        self.config.flux_band_cutoff_hz,
+                        magnitude=magnitude,
                     )
                     >= self.config.min_band_energy_ratio
                     if self.config.flux_band_cutoff_hz is not None

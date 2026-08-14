@@ -183,7 +183,7 @@ def test_mask() -> Any:
 @bp.route("/detections", methods=["GET"])
 def get_detections() -> Any:
     """Get detections from the db."""
-    limit = request.args.get("limit", 100)
+    limit = request.args.get("limit", 100, type=int)
     camera = request.args.get("camera", "all")
     label = request.args.get("label", "all")
     zone = request.args.get("zone", "all")
@@ -211,7 +211,7 @@ def get_detections() -> Any:
         clauses.append(Detection.label == label)
 
     if zone != "all":
-        clauses.append(Detection.zone.cast("text") % f'*"{zone}"*')
+        clauses.append(Detection.zone == zone)
 
     if after:
         clauses.append(Detection.start_time > after)

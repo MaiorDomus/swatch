@@ -153,14 +153,15 @@ class ImageProcessor:
 
         camera_config = self.config.cameras[camera_name]
 
+        img_bytes = fetch_snapshot_bytes(image_url)
+
+        if img_bytes is None:
+            return response
+
+        img = cv2.imdecode(np.asarray(bytearray(img_bytes), dtype=np.uint8), -1)
+
         for zone_name, zone in camera_config.zones.items():
             response[zone_name] = {}
-            img_bytes = fetch_snapshot_bytes(image_url)
-
-            if img_bytes is None:
-                continue
-
-            img = cv2.imdecode(np.asarray(bytearray(img_bytes), dtype=np.uint8), -1)
 
             coordinates = zone.coordinates.split(", ")
 

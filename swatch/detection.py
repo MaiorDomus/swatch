@@ -199,6 +199,7 @@ class DetectionCleanup(threading.Thread):
             Detection.delete().where(
                 Detection.camera == cam_name,
                 Detection.start_time < expire_after,
+                Detection.end_time.is_null(False),
             ).execute()
 
         # audio_monitors' Detection rows have no camera (see
@@ -213,6 +214,7 @@ class DetectionCleanup(threading.Thread):
             Detection.delete().where(
                 Detection.label == monitor_name,
                 Detection.start_time < expire_after,
+                Detection.end_time.is_null(False),
             ).execute()
 
     def run(self) -> None:

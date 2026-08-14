@@ -43,7 +43,7 @@ Key source files:
   raw per-frame results into sustained on/off state and records it to the DB) and
   `DetectionCleanup`.
 - `swatch/audio.py` — the audio monitor equivalent of the above for RTSP streams.
-  `swatch/snapshot.py` — saving/serving snapshot images (clean, masked, bounding-box
+- `swatch/snapshot.py` — saving/serving snapshot images (clean, masked, bounding-box
   annotated) to disk and via the API.
 - `swatch/http.py` — Flask routes (see `docs/api.md`).
 - `migrations/` — `peewee_migrate` DB migrations for the detection-history table.
