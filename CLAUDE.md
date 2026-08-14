@@ -89,6 +89,15 @@ actually pick up the change — purely bumping the version, no `Dockerfile` edit
 needed. See recent commits in that repo (e.g. "Bump to 3.2.17-local to pick
 up...") for the exact pattern to follow.
 
+## Inspecting a live instance
+
+The workspace's primary live `swatch` instance runs at `http://192.168.10.10:4500`.
+Its web UI has a read-only Settings page that renders the raw `config.yaml`, but for
+scripted/agent access, hit the API directly instead of scraping that page:
+- `GET /api/config/raw` — the config file's exact contents (comments and formatting
+  included), e.g. `curl http://192.168.10.10:4500/api/config/raw`.
+- `GET /api/config` — the parsed `SwatchConfig` as JSON (normalized, no comments).
+
 ## Tuning color-matched object thresholds
 
 When a color-matched `object` seems to need much looser `min_area`/`max_area`/
