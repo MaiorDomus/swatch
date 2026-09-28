@@ -143,6 +143,30 @@ at its default: 0.02 was too permissive and let a podcast playing near the camer
 the hood off, sustain enough incidental low-band energy to read as the hood running;
 0.05-0.10 correctly rejected it while still catching the hood.
 
+`min_band_level_db` (default: unset) is an alternative to that ratio: an absolute
+minimum loudness, in dBFS, of just the audio at or below `flux_band_cutoff_hz`. The
+ratio has a blind spot in both directions, found by recording a real hood alongside
+common kitchen sounds:
+
+- Something loud playing *on top of* the running fan (a video, a podcast) adds energy
+  above the cutoff and drags the fan's share of the total down -- with a video 6-12 dB
+  louder than normal, the hood's share fell from 0.60-0.77 to as low as 0.03, so no
+  ratio threshold both kept catching the hood and rejected other sounds.
+- A coffee grinder, or the same video alone, can briefly carry a 0.1-0.36 share,
+  enough to pass a permissive ratio.
+
+The fan's own low-band level doesn't care what's playing above it: the same hood
+measured -53 to -48 dBFS below 500Hz whether or not the video was playing, while the
+video alone, a running tap and a kettle mostly sat around -80 to -64 dBFS. A threshold
+of about -56 separated them cleanly. When you set `min_band_level_db`, you can set
+`min_band_energy_ratio` to 0: FFT leakage below the cutoff is far too quiet to pass an
+absolute level anyway.
+
+Short bursts of genuinely steady, bass-heavy noise -- the same grinder measured 4-5
+seconds at -45 dBFS with very low flux -- look exactly like the hood for their
+duration. What gives them away is how short they are, so set `min_on_seconds` longer
+than those bursts (8-10 seconds worked for that grinder).
+
 Tested live against a real UniFi G6 Instant with its RTSP audio alias enabled, pointed at
 a kitchen hood fan, with both the fan on and off:
 
@@ -197,6 +221,12 @@ audio_monitors:
     # a steady hum once normalized. Only applies when flux_band_cutoff_hz is set
     # (Default: shown below).
     min_band_energy_ratio: 0.08
+    # OPTIONAL: Minimum RMS loudness, in dBFS, of just the audio at or below
+    # flux_band_cutoff_hz (the whole window if no cutoff is set) for a window to count
+    # as the hum -- unlike min_band_energy_ratio, not dragged down by other sound
+    # playing on top of the fan. When set, min_band_energy_ratio can be set to 0
+    # (Default: unset, no check).
+    # min_band_level_db: -56.0
     # OPTIONAL: How long loud + steady audio must be sustained before switching on,
     # in seconds (Default: shown below).
     min_on_seconds: 5.0

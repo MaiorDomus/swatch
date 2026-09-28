@@ -222,6 +222,25 @@ class AudioMonitorConfig(SwatchBaseModel):
         ),
         default=0.08,
     )
+    min_band_level_db: float | None = Field(
+        title=(
+            "Minimum RMS loudness (dBFS) of just the audio at or below "
+            "flux_band_cutoff_hz (or of the whole window, if no cutoff is set) "
+            "for a window to count as the hum. An absolute level, unlike "
+            "min_band_energy_ratio: other sound playing on top of the fan adds "
+            "energy above the cutoff and drags that ratio down while the fan's "
+            "own hum stays just as loud. Tested live against a real UniFi camera "
+            "with flux_band_cutoff_hz=500: the hood measured -53 to -48 dBFS in "
+            "that band, with or without a video playing loudly on top, while the "
+            "video alone, a running tap and a kettle mostly sat around -80 to "
+            "-64 dBFS, with only brief spikes above -56 (rejected anyway by the "
+            "flux check and min_on_seconds). "
+            "When set, min_band_energy_ratio can usually be set to 0 -- FFT "
+            "leakage below the cutoff is far too quiet to pass this level. Unset "
+            "(None) to skip this check."
+        ),
+        default=None,
+    )
     min_on_seconds: float = Field(
         title="How long loud + steady audio must be sustained before switching on.",
         default=5.0,

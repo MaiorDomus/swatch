@@ -143,6 +143,39 @@ def compute_low_band_energy_ratio(
     return float(magnitude[freqs <= cutoff_hz].sum()) / total
 
 
+def compute_band_rms_dbfs(
+    samples: np.ndarray, sample_rate: int, cutoff_hz: float
+) -> float:
+    """RMS loudness (dBFS) of only the part of the signal at or below
+    cutoff_hz -- as if it had been through an ideal low-pass filter first.
+
+    Unlike compute_low_band_energy_ratio, this is an absolute level, not a
+    share of the whole window: other sound playing on top (a podcast, a video)
+    adds energy *above* the cutoff and so drags that ratio down even while a
+    fan is still running underneath, but it barely changes how loud the
+    fan's own low-frequency hum is. Computed straight from the (unwindowed)
+    FFT via Parseval's theorem, so for a signal with no content above the
+    cutoff it equals compute_rms_dbfs exactly."""
+    if samples.size == 0:
+        return SILENT_DBFS
+
+    normalized = samples.astype(np.float64) / 32768.0
+    power = np.abs(np.fft.rfft(normalized)) ** 2
+    # rfft keeps only the non-negative frequencies: every bin except DC (and
+    # Nyquist, for an even length) also stands in for its negative twin.
+    power[1:] *= 2
+    if normalized.size % 2 == 0:
+        power[-1] /= 2
+
+    freqs = np.fft.rfftfreq(normalized.size, d=1.0 / sample_rate)
+    mean_square = float(power[freqs <= cutoff_hz].sum()) / normalized.size**2
+
+    if mean_square <= 0:
+        return SILENT_DBFS
+
+    return 10 * float(np.log10(mean_square))
+
+
 def compute_spectral_flux(
     prev_spectrum: np.ndarray, curr_spectrum: np.ndarray
 ) -> float:
@@ -334,9 +367,29 @@ class AudioMonitor(threading.Thread):
                     else True
                 )
 
+                # Optional absolute-level check on the same low band (the
+                # whole spectrum if no cutoff is set): unlike the ratio above,
+                # it isn't dragged down by other sound playing on top of the
+                # fan, and quiet leakage below the cutoff can't reach it.
+                has_band_level = (
+                    (
+                        compute_band_rms_dbfs(
+                            samples,
+                            self.config.sample_rate,
+                            self.config.flux_band_cutoff_hz,
+                        )
+                        if self.config.flux_band_cutoff_hz is not None
+                        else loudness_db
+                    )
+                    >= self.config.min_band_level_db
+                    if self.config.min_band_level_db is not None
+                    else True
+                )
+
                 is_candidate = (
                     loudness_db >= self.config.threshold_db
                     and has_band_energy
+                    and has_band_level
                     and flux <= self.config.max_spectral_flux
                 )
                 self.is_on = self._classifier.update(is_candidate)

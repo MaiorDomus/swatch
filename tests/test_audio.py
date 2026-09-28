@@ -16,6 +16,7 @@ from swatch.audio import (
     SILENT_DBFS,
     AudioMonitor,
     SoundStateClassifier,
+    compute_band_rms_dbfs,
     compute_low_band_energy_ratio,
     compute_normalized_spectrum,
     compute_rms_dbfs,
@@ -173,6 +174,51 @@ class TestComputeLowBandEnergyRatio(unittest.TestCase):
             np.int16
         )
         assert compute_low_band_energy_ratio(samples, 16000, 500) < 0.02
+
+
+class TestComputeBandRmsDbfs(unittest.TestCase):
+    """Testing the absolute loudness of just the low band, used so that
+    other sound playing on top of a fan doesn't hide it."""
+
+    @staticmethod
+    def _tone(freq: float, amplitude: float = 20000) -> np.ndarray:
+        return np.sin(2 * np.pi * freq * np.arange(16000) / 16000) * amplitude
+
+    def test_empty_array_is_very_negative(self) -> None:
+        assert (
+            compute_band_rms_dbfs(np.array([], dtype=np.int16), 16000, 500)
+            == SILENT_DBFS
+        )
+
+    def test_silence_is_very_negative(self) -> None:
+        samples = np.zeros(16000, dtype=np.int16)
+        assert compute_band_rms_dbfs(samples, 16000, 500) == SILENT_DBFS
+
+    def test_low_tone_matches_full_rms(self) -> None:
+        """With nothing above the cutoff, the band level is the whole level."""
+        samples = self._tone(120).astype(np.int16)
+        band_db = compute_band_rms_dbfs(samples, 16000, 500)
+        assert abs(band_db - compute_rms_dbfs(samples)) < 0.1
+
+    def test_high_tone_is_far_below_full_rms(self) -> None:
+        samples = self._tone(4000).astype(np.int16)
+        band_db = compute_band_rms_dbfs(samples, 16000, 500)
+        assert band_db < compute_rms_dbfs(samples) - 60
+
+    def test_loud_content_above_cutoff_does_not_change_band_level(self) -> None:
+        """The whole point versus compute_low_band_energy_ratio: adding a much
+        louder sound above the cutoff (a podcast over a running fan) leaves
+        the low band's own level where it was, even though its share of the
+        total collapses."""
+        hum = self._tone(120, amplitude=500)
+        podcast = self._tone(2000, amplitude=15000)
+        alone = hum.astype(np.int16)
+        mixed = (hum + podcast).astype(np.int16)
+
+        mixed_db = compute_band_rms_dbfs(mixed, 16000, 500)
+        alone_db = compute_band_rms_dbfs(alone, 16000, 500)
+        assert abs(mixed_db - alone_db) < 0.5
+        assert compute_low_band_energy_ratio(mixed, 16000, 500) < 0.1
 
 
 class TestSoundStateClassifier(unittest.TestCase):
@@ -339,6 +385,9 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
         cls.varying_tone_wav = cls._generate_varying_tone()
         cls.fan_with_podcast_wav = cls._generate_fan_noise_with_podcast()
         cls.silence_wav = cls._generate_silence()
+        cls.low_fan_wav = cls._generate_low_fan()
+        cls.low_fan_with_loud_podcast_wav = cls._generate_low_fan_with_loud_podcast()
+        cls.hiss_over_faint_hum_wav = cls._generate_hiss_over_faint_hum()
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -460,6 +509,63 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
         return path
 
     @classmethod
+    def _ffmpeg_mix(cls, name: str, inputs: list[str], filter_complex: str) -> str:
+        """Render lavfi sources through a filter graph to a 16kHz mono WAV."""
+        path = str(Path(cls.tmp_dir) / name)
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+        for source in inputs:
+            cmd += ["-f", "lavfi", "-i", source]
+        cmd += ["-filter_complex", filter_complex, "-ar", "16000", "-ac", "1", path]
+        subprocess.run(cmd, check=True)
+        return path
+
+    @classmethod
+    def _generate_low_fan(cls) -> str:
+        """Low-passed noise + a 120Hz hum at roughly a real hood's measured
+        level (~-49 dBFS, almost all of it below 500Hz)."""
+        return cls._ffmpeg_mix(
+            "low_fan.wav",
+            [
+                "anoisesrc=color=brown:amplitude=0.02:duration=8",
+                "sine=frequency=120:duration=8",
+            ],
+            "[0]lowpass=f=400[n];[1]volume=0.01[h];"
+            "[n][h]amix=inputs=2:duration=shortest:normalize=0",
+        )
+
+    @classmethod
+    def _generate_low_fan_with_loud_podcast(cls) -> str:
+        """The low fan above with a much louder speech-like sweep on top (a
+        video playing near the camera): the fan's share of the total drops
+        to ~0.05, below min_band_energy_ratio's default, while its own
+        low-band level is unchanged."""
+        return cls._ffmpeg_mix(
+            "low_fan_with_loud_podcast.wav",
+            [
+                "anoisesrc=color=brown:amplitude=0.02:duration=8",
+                "sine=frequency=120:duration=8",
+                "aevalsrc='0.04*sin(2*PI*(600+2400*mod(t,1.5)/1.5)*t)':d=8:s=16000",
+            ],
+            "[0]lowpass=f=400[n];[1]volume=0.01[h];"
+            "[n][h][2]amix=inputs=3:duration=shortest:normalize=0",
+        )
+
+    @classmethod
+    def _generate_hiss_over_faint_hum(cls) -> str:
+        """Loud, steady high-frequency hiss (a running tap, say) over a hum
+        far too faint to be the hood: loud and steady overall (~-51 dBFS),
+        but only ~-65 dBFS below 500Hz."""
+        return cls._ffmpeg_mix(
+            "hiss_over_faint_hum.wav",
+            [
+                "anoisesrc=color=pink:amplitude=0.03:duration=8",
+                "sine=frequency=120:duration=8",
+            ],
+            "[0]highpass=f=1000[n];[1]volume=0.006[h];"
+            "[n][h]amix=inputs=2:duration=shortest:normalize=0",
+        )
+
+    @classmethod
     def _generate_silence(cls) -> str:
         path = str(Path(cls.tmp_dir) / "silence.wav")
         subprocess.run(
@@ -480,7 +586,10 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
         return path
 
     def _run_to_completion(
-        self, wav_path: str, flux_band_cutoff_hz: float | None = 500.0
+        self,
+        wav_path: str,
+        flux_band_cutoff_hz: float | None = 500.0,
+        **overrides: float | None,
     ) -> bool:
         config = AudioMonitorConfig(
             name="test",
@@ -488,6 +597,7 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
             min_on_seconds=2,
             min_off_seconds=2,
             flux_band_cutoff_hz=flux_band_cutoff_hz,
+            **overrides,
         )
         monitor = AudioMonitor(config, multiprocessing.Event(), input_source=wav_path)
         monitor._process_stream()
@@ -519,6 +629,51 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
 
     def test_silence_stays_off(self) -> None:
         assert self._run_to_completion(self.silence_wav) is False
+
+    def test_loud_podcast_hides_fan_from_band_energy_ratio(self) -> None:
+        """Regression baseline for min_band_level_db: with only the ratio
+        guard, a video playing loudly over a running fan drags the fan's
+        share of the total below min_band_energy_ratio and it's missed."""
+        assert self._run_to_completion(self.low_fan_with_loud_podcast_wav) is False
+
+    def test_band_level_catches_fan_under_loud_podcast(self) -> None:
+        assert (
+            self._run_to_completion(
+                self.low_fan_with_loud_podcast_wav,
+                min_band_energy_ratio=0.0,
+                min_band_level_db=-56.0,
+            )
+            is True
+        )
+
+    def test_band_level_rejects_loud_hiss_over_faint_hum(self) -> None:
+        """Loud, steady sound that's mostly above the cutoff is what the
+        ratio guard was for; the level check rejects it by itself too, so
+        the ratio can be switched off when using it."""
+        assert (
+            self._run_to_completion(
+                self.hiss_over_faint_hum_wav, min_band_energy_ratio=0.0
+            )
+            is True
+        )
+        assert (
+            self._run_to_completion(
+                self.hiss_over_faint_hum_wav,
+                min_band_energy_ratio=0.0,
+                min_band_level_db=-56.0,
+            )
+            is False
+        )
+
+    def test_band_level_threshold_is_respected(self) -> None:
+        """The low fan measures ~-49 dBFS in its band: on just below that
+        threshold, off just above it."""
+        assert (
+            self._run_to_completion(self.low_fan_wav, min_band_level_db=-52.0) is True
+        )
+        assert (
+            self._run_to_completion(self.low_fan_wav, min_band_level_db=-46.0) is False
+        )
 
     def test_missing_input_does_not_raise(self) -> None:
         assert self._run_to_completion("/nonexistent/path/does-not-exist.wav") is False
