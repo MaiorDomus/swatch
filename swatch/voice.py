@@ -633,7 +633,12 @@ class VoiceSatellite:
                 continue
 
             if ww_id not in self._loaded_wake_words:
-                self._loaded_wake_words[ww_id] = available.load()
+                model = available.load()
+
+                if self.config.wake_word_threshold is not None:
+                    model.probability_cutoff = self.config.wake_word_threshold
+
+                self._loaded_wake_words[ww_id] = model
 
             active.append(self._loaded_wake_words[ww_id])
 

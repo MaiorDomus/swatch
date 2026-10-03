@@ -295,6 +295,13 @@ voice_satellites:
     # (Default: shown below).
     wake_words:
       - okay_nabu
+    # OPTIONAL: Probability (0-1) a wake word must reach to trigger. Lower is more
+    # sensitive but more prone to false triggers. A camera across the room hears you
+    # quieter and with more echo than a satellite on a table: on a G6 Instant a clear
+    # "Okay Nabu" from the far side of the room scored 0.75, while ordinary room noise,
+    # TV and speech never went above 0.07 (Default: each model's own, 0.85 for
+    # okay_nabu).
+    # wake_word_threshold: 0.7
     # OPTIONAL: Directory of extra microWakeWord models, each a <id>.json config next to
     # its .tflite file (the format ESPHome and Linux Voice Assistant use), e.g. a
     # custom-trained wake word. They're offered to Home Assistant alongside the built-in

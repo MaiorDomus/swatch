@@ -130,6 +130,18 @@ class TestActiveWakeWords(unittest.TestCase):
         satellite = VoiceSatellite(make_config())
         assert [ww.id for ww in satellite.active_wake_words] == ["okay_nabu"]
 
+    def test_models_use_their_own_threshold_by_default(self) -> None:
+        satellite = VoiceSatellite(make_config())
+        assert satellite.active_wake_words[0].probability_cutoff == 0.85
+
+    def test_threshold_override(self) -> None:
+        satellite = VoiceSatellite(make_config(wake_word_threshold=0.7))
+        satellite.set_active_wake_words(["okay_nabu", "hey_jarvis"])
+        assert [ww.probability_cutoff for ww in satellite.active_wake_words] == [
+            0.7,
+            0.7,
+        ]
+
     def test_unknown_ids_are_skipped(self) -> None:
         satellite = VoiceSatellite(make_config())
         satellite.set_active_wake_words(["nope", "hey_jarvis"])

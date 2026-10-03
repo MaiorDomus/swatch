@@ -325,6 +325,18 @@ class VoiceSatelliteConfig(SwatchBaseModel):
         default_factory=lambda: ["okay_nabu"],
         max_length=2,
     )
+    wake_word_threshold: float | None = Field(
+        title=(
+            "Probability (0-1) a wake word must reach to trigger, for every "
+            "active wake word. Lower is more sensitive, but more prone to "
+            "false triggers. Unset uses each model's own (okay_nabu: 0.85). "
+            "A camera across the room hears you quieter and with more echo "
+            "than a voice satellite on a table, so it can need a lower value."
+        ),
+        default=None,
+        gt=0,
+        lt=1,
+    )
     wake_word_dir: str | None = Field(
         title=(
             "Directory of extra microWakeWord models (each a <id>.json config "
