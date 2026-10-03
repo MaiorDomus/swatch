@@ -183,11 +183,11 @@ class TestOnAudio(unittest.TestCase):
 
     def test_audio_is_sent_only_while_streaming(self) -> None:
         self._feed()
-        assert not [s for s in self.scheduled if s[0] == "_send"]
+        assert not [s for s in self.scheduled if s[0] == "_mic_chunk"]
 
         self.satellite.streaming_audio = True
         self._feed()
-        assert [s for s in self.scheduled if s[0] == "_send"]
+        assert [s for s in self.scheduled if s[0] == "_mic_chunk"]
 
     def test_stop_word_only_while_speaking(self) -> None:
         self.stop_word.fire = True
@@ -197,6 +197,53 @@ class TestOnAudio(unittest.TestCase):
         self.satellite.speaking = True
         self._feed()
         assert ("stop_speaking", ()) in self.scheduled
+
+
+class TestMicHoldBack(unittest.TestCase):
+    """Mic audio waits for Home Assistant to confirm the run, so the start
+    of the command isn't lost when Home Assistant clears its audio queue."""
+
+    def setUp(self) -> None:
+        self.satellite = VoiceSatellite(make_config())
+        self.sent: list[Any] = []
+        self.satellite._send = self.sent.extend  # type: ignore[method-assign]
+        self.satellite._start_run("Okay Nabu")
+        self.sent.clear()  # the start request itself
+
+    def _audio(self) -> list[bytes]:
+        return [m.data for m in self.sent]
+
+    def test_audio_is_held_until_the_run_is_accepted(self) -> None:
+        self.satellite._mic_chunk(b"doe")
+        self.satellite._mic_chunk(b"de")
+        assert self.sent == []
+
+        self.satellite._run_accepted()
+        assert self._audio() == [b"doe", b"de"]
+
+        self.satellite._mic_chunk(b"lampen")
+        assert self._audio() == [b"doe", b"de", b"lampen"]
+
+    def test_held_audio_is_capped(self) -> None:
+        chunk = b"\x00" * 2048
+        for _ in range(200):  # ~12.8 s, more than the cap
+            self.satellite._mic_chunk(chunk)
+
+        self.satellite._run_accepted()
+        assert len(self.sent) * len(chunk) <= 16000 * 2 * 10
+
+    def test_held_audio_is_dropped_if_the_run_ended(self) -> None:
+        self.satellite._mic_chunk(b"doe")
+        self.satellite.streaming_audio = False
+        self.satellite._run_accepted()
+        assert self.sent == []
+
+    def test_a_new_run_starts_with_an_empty_buffer(self) -> None:
+        self.satellite._mic_chunk(b"old")
+        self.satellite._start_run("Okay Nabu")
+        self.sent.clear()
+        self.satellite._run_accepted()
+        assert self.sent == []
 
 
 class FakeTalkbackStream:
@@ -238,10 +285,62 @@ class TestProtectSpeaker(unittest.IsolatedAsyncioTestCase):
 
         with mock.patch("swatch.voice.PLAY_TIMEOUT_SECONDS", 0.1):
             with self.assertRaises(TimeoutError):
-                await speaker.play("http://ha/reply.mp3")
+                await speaker.play("/tmp/reply.mp3")
 
         assert camera.stopped
         assert speaker._camera is None  # reconnect on the next reply
+
+    async def test_http_replies_are_downloaded_first(self) -> None:
+        """Home Assistant's chunked TTS responses make the talkback reader
+        fail at the very end, so a reply is fetched to a file first."""
+        from aiohttp import web
+
+        async def tts(request: web.Request) -> web.StreamResponse:
+            response = web.StreamResponse()
+            response.enable_chunked_encoding()
+            await response.prepare(request)
+            await response.write(b"ID3fake-mp3")
+            await response.write_eof()
+            return response
+
+        app = web.Application()
+        app.router.add_get("/api/tts_proxy/reply.mp3", tts)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = runner.addresses[0][1]
+
+        speaker, _camera = self._speaker()
+        played: list[tuple[str, bytes]] = []
+
+        async def play_file(path: str) -> None:
+            with open(path, "rb") as f:
+                played.append((path, f.read()))
+
+        speaker._play_file = play_file  # type: ignore[method-assign]
+
+        try:
+            await speaker.play(
+                f"http://127.0.0.1:{port}/api/tts_proxy/reply.mp3?token=x"
+            )
+        finally:
+            await runner.cleanup()
+
+        assert played[0][1] == b"ID3fake-mp3"
+        assert played[0][0].endswith(".mp3")
+        assert not Path(played[0][0]).exists()  # cleaned up afterwards
+
+    async def test_local_files_are_played_directly(self) -> None:
+        speaker, _camera = self._speaker()
+        played: list[str] = []
+
+        async def play_file(path: str) -> None:
+            played.append(path)
+
+        speaker._play_file = play_file  # type: ignore[method-assign]
+        await speaker.play("/media/chime.mp3")
+        assert played == ["/media/chime.mp3"]
 
     async def test_connect_failure_is_not_raised(self) -> None:
         speaker, _camera = self._speaker()

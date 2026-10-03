@@ -27,6 +27,8 @@ import hashlib
 import json
 import logging
 import multiprocessing
+import os
+import tempfile
 import threading
 import time
 from collections.abc import Iterable
@@ -88,6 +90,10 @@ RUN_TIMEOUT_SECONDS = 60.0
 # can't leave the satellite busy (Home Assistant refuses new announcements
 # until the previous one reports finished).
 PLAY_TIMEOUT_SECONDS = 180.0
+DOWNLOAD_TIMEOUT_SECONDS = 30.0
+# Most mic audio held back while Home Assistant hasn't confirmed a run yet
+# (10 s at 16 kHz, 16-bit mono); anything older is dropped.
+MAX_PENDING_MIC_BYTES = 16000 * 2 * 10
 BUILTIN_MODELS_DIR = Path(__file__).parent / "voice_models"
 
 SUPPORTED_FEATURES = (
@@ -234,12 +240,46 @@ class ProtectSpeaker:
         except Exception:
             logger.exception("Could not connect to UniFi Protect, will retry on reply")
 
+    async def _download(self, url: str) -> str:
+        """Fetch url to a temporary file and return its path.
+
+        Home Assistant serves TTS replies chunked with no length, and the
+        ffmpeg/PyAV http reader talkback uses raises "Input/output error" at
+        the end of such a response -- after the whole reply has already been
+        decoded, so the reply plays but is reported as failed (and the
+        Protect session is dropped). Reading a complete local file avoids it.
+        """
+        import aiohttp  # pylint: disable=import-outside-toplevel
+
+        suffix = Path(url.split("?", 1)[0]).suffix or ".audio"
+        timeout = aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT_SECONDS)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                data = await response.read()
+
+        fd, path = tempfile.mkstemp(prefix="swatch-reply-", suffix=suffix)
+        with os.fdopen(fd, "wb") as audio_file:
+            audio_file.write(data)
+
+        return path
+
     async def play(self, url: str) -> None:
         """Play url on the camera's speaker, returning once it has finished."""
+        path = await self._download(url) if url.startswith("http") else url
+
+        try:
+            await self._play_file(path)
+        finally:
+            if path != url:
+                os.unlink(path)
+
+    async def _play_file(self, path: str) -> None:
         try:
             camera = await self._get_camera()
             playback = camera.play_audio(
-                url, blocking=True, use_public_api=self.config.api_key is not None
+                path, blocking=True, use_public_api=self.config.api_key is not None
             )
 
             try:
@@ -473,6 +513,9 @@ class VoiceSatellite:
         self._announcing = False
         self._play_task: asyncio.Task[None] | None = None
         self._last_run_activity = 0.0
+        self._accepted = False
+        self._pending_mic: list[bytes] = []
+        self._pending_mic_bytes = 0
 
     # -- lifecycle (loop thread) --------------------------------------------
 
@@ -538,7 +581,7 @@ class VoiceSatellite:
 
     def on_audio(self, raw: bytes) -> None:
         if self.streaming_audio:
-            self._call_soon(self._send, [VoiceAssistantAudio(data=raw)])
+            self._call_soon(self._mic_chunk, raw)
 
         features = list(self._features.process_streaming(raw))
 
@@ -674,6 +717,8 @@ class VoiceSatellite:
                     "Voice satellite %s: Home Assistant refused the run", self.name
                 )
                 self._finish_run()
+            else:
+                self._run_accepted()
 
             return []
 
@@ -719,6 +764,9 @@ class VoiceSatellite:
 
     def _start_run(self, wake_word_phrase: str = "") -> None:
         self._last_run_activity = time.monotonic()
+        self._pending_mic.clear()
+        self._pending_mic_bytes = 0
+        self._accepted = False
         self.pipeline_active = True
         self._tts_url = None
         self._tts_played = False
@@ -727,6 +775,33 @@ class VoiceSatellite:
             [VoiceAssistantRequest(start=True, wake_word_phrase=wake_word_phrase)]
         )
         self.streaming_audio = True
+
+    def _mic_chunk(self, raw: bytes) -> None:
+        """Send mic audio for the current run -- or, until Home Assistant has
+        confirmed the run, hold it back. Home Assistant clears its audio
+        queue when it starts the run, so audio sent straight after the start
+        request can be thrown away, clipping the first word of the command;
+        ESPHome devices wait for the confirmation the same way."""
+        if not self.streaming_audio:
+            return
+
+        if self._accepted:
+            self._send([VoiceAssistantAudio(data=raw)])
+            return
+
+        self._pending_mic.append(raw)
+        self._pending_mic_bytes += len(raw)
+
+        while self._pending_mic_bytes > MAX_PENDING_MIC_BYTES:
+            self._pending_mic_bytes -= len(self._pending_mic.pop(0))
+
+    def _run_accepted(self) -> None:
+        self._accepted = True
+        pending, self._pending_mic = self._pending_mic, []
+        self._pending_mic_bytes = 0
+
+        if self.streaming_audio and pending:
+            self._send([VoiceAssistantAudio(data=raw) for raw in pending])
 
     def _end_streaming_run(self) -> None:
         if self.streaming_audio:
