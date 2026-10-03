@@ -336,9 +336,14 @@ voice_satellites:
       # REQUIRED: A local UniFi OS account allowed to use the camera's talkback.
       username: swatch
       password: "your-password"
-      # OPTIONAL: UniFi Protect integration API key. When set, talkback sessions are
-      # requested through Protect's public API; otherwise audio is sent straight to the
-      # camera's talkback port over UDP (Default: none).
+      # OPTIONAL: Send replies through a talkback session requested from Protect's
+      # public API (needs api_key) instead of straight to the camera's talkback port
+      # over UDP. Off by default: on a G6 Instant those sessions left the speaker
+      # amplifier humming after every reply, until the camera's audio settings were
+      # changed (Default: shown below).
+      talkback_via_api: false
+      # OPTIONAL: UniFi Protect integration API key, only for talkback_via_api
+      # (Default: none).
       # api_key: ...
       # OPTIONAL: Verify the console's TLS certificate (Default: shown below).
       verify_ssl: false

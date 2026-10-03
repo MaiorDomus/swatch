@@ -270,11 +270,20 @@ class ProtectConfig(SwatchBaseModel):
     password: str = Field(title="Password for the local UniFi OS account.")
     api_key: str | None = Field(
         title=(
-            "Optional UniFi Protect integration API key. When set, talkback "
-            "sessions are requested through Protect's public API; otherwise "
-            "audio is sent straight to the camera's talkback port over UDP."
+            "Optional UniFi Protect integration API key, needed only for "
+            "talkback_via_api."
         ),
         default=None,
+    )
+    talkback_via_api: bool = Field(
+        title=(
+            "Request a talkback session through Protect's public API (needs "
+            "api_key) instead of sending audio straight to the camera's "
+            "talkback port over UDP. Off by default: on a G6 Instant those "
+            "sessions left the speaker amplifier humming after every reply "
+            "until the camera's audio settings were changed."
+        ),
+        default=False,
     )
     verify_ssl: bool = Field(
         title="Verify the console's TLS certificate (self-signed by default).",

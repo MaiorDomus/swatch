@@ -325,7 +325,7 @@ class ProtectSpeaker:
         try:
             camera = await self._get_camera()
             playback = camera.play_audio(
-                path, blocking=True, use_public_api=self.config.api_key is not None
+                path, blocking=True, use_public_api=self.config.talkback_via_api
             )
 
             try:

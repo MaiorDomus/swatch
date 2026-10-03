@@ -205,6 +205,7 @@ class TestConfig(unittest.TestCase):
         assert protect.verify_ssl is False
         assert protect.api_key is None
         assert protect.speaker_volume is None
+        assert protect.talkback_via_api is False
 
     def test_speaker_volume_must_be_a_percentage(self) -> None:
         with self.assertRaises(ValidationError):
