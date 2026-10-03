@@ -13,9 +13,10 @@ from unittest import mock
 from aioesphomeapi import APIClient
 from aioesphomeapi.model import VoiceAssistantEventType, VoiceAssistantFeature
 
-from swatch.config import VoiceSatelliteConfig
+from swatch.config import ProtectConfig, VoiceSatelliteConfig
 from swatch.voice import (
     EspHomeConnection,
+    ProtectSpeaker,
     VoiceSatellite,
     VoiceSatelliteServer,
     find_wake_words,
@@ -48,6 +49,10 @@ class FakeSpeaker:
     def __init__(self) -> None:
         self.played: list[str] = []
         self.stopped = False
+        self.connected = False
+
+    async def connect(self) -> None:
+        self.connected = True
 
     async def play(self, url: str) -> None:
         self.played.append(url)
@@ -194,6 +199,60 @@ class TestOnAudio(unittest.TestCase):
         assert ("stop_speaking", ()) in self.scheduled
 
 
+class FakeTalkbackStream:
+    is_running = True
+
+
+class FakeCamera:
+    """A Protect camera whose talkback never finishes."""
+
+    name = "Living Room"
+
+    def __init__(self) -> None:
+        self.talkback_stream = FakeTalkbackStream()
+        self.stopped = False
+
+    async def play_audio(self, url: str, **_kwargs: Any) -> None:
+        await asyncio.sleep(3600)
+
+    async def stop_audio(self) -> None:
+        self.stopped = True
+
+
+class TestProtectSpeaker(unittest.IsolatedAsyncioTestCase):
+    def _speaker(self) -> tuple[ProtectSpeaker, FakeCamera]:
+        speaker = ProtectSpeaker(
+            ProtectConfig(host="h", username="u", password="p", camera="Living Room")
+        )
+        camera = FakeCamera()
+
+        async def get_camera() -> FakeCamera:
+            speaker._camera = camera
+            return camera
+
+        speaker._get_camera = get_camera  # type: ignore[method-assign]
+        return speaker, camera
+
+    async def test_hung_playback_is_stopped(self) -> None:
+        speaker, camera = self._speaker()
+
+        with mock.patch("swatch.voice.PLAY_TIMEOUT_SECONDS", 0.1):
+            with self.assertRaises(TimeoutError):
+                await speaker.play("http://ha/reply.mp3")
+
+        assert camera.stopped
+        assert speaker._camera is None  # reconnect on the next reply
+
+    async def test_connect_failure_is_not_raised(self) -> None:
+        speaker, _camera = self._speaker()
+
+        async def broken() -> None:
+            raise OSError("console unreachable")
+
+        speaker._get_camera = broken  # type: ignore[method-assign,assignment]
+        await speaker.connect()
+
+
 class TestFraming(unittest.TestCase):
     def test_frames_split_across_reads_are_reassembled(self) -> None:
         satellite = VoiceSatellite(make_config())
@@ -279,6 +338,9 @@ class TestHomeAssistantSession(unittest.IsolatedAsyncioTestCase):
 
     def _on_loop(self, callback: Any, *args: Any) -> None:
         self.server.loop.call_soon_threadsafe(callback, *args)
+
+    async def test_speaker_connects_at_startup(self) -> None:
+        assert self.speaker.connected
 
     async def test_device_info(self) -> None:
         info = await self.client.device_info()

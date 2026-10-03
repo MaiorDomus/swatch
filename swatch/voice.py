@@ -84,6 +84,10 @@ MAX_ACTIVE_WAKE_WORDS = 2
 # pipeline events) is given up on, so the satellite can't get stuck with
 # wake words disabled.
 RUN_TIMEOUT_SECONDS = 60.0
+# Upper bound on playing one url, so a talkback stream that never finishes
+# can't leave the satellite busy (Home Assistant refuses new announcements
+# until the previous one reports finished).
+PLAY_TIMEOUT_SECONDS = 180.0
 BUILTIN_MODELS_DIR = Path(__file__).parent / "voice_models"
 
 SUPPORTED_FEATURES = (
@@ -213,13 +217,29 @@ class ProtectSpeaker:
 
         raise ValueError(f"No UniFi Protect camera named {self.config.camera}")
 
+    async def connect(self) -> None:
+        """Log in and find the camera ahead of the first reply, so that one
+        isn't delayed (or held up) by the login and the uiprotect import."""
+        try:
+            camera = await self._get_camera()
+            logger.info("UniFi Protect connected, replies play on %s", camera.name)
+        except Exception:
+            logger.exception("Could not connect to UniFi Protect, will retry on reply")
+
     async def play(self, url: str) -> None:
         """Play url on the camera's speaker, returning once it has finished."""
         try:
             camera = await self._get_camera()
-            await camera.play_audio(
+            playback = camera.play_audio(
                 url, blocking=True, use_public_api=self.config.api_key is not None
             )
+
+            try:
+                await asyncio.wait_for(playback, PLAY_TIMEOUT_SECONDS)
+            except TimeoutError:
+                logger.warning("Talkback on %s didn't finish, stopping it", camera.name)
+                await self.stop()
+                raise
         except Exception:
             # A stale session or a camera that went away: start over next time.
             self._camera = None
@@ -462,6 +482,9 @@ class VoiceSatellite:
             self.port,
             ", ".join(ww.id for ww in self.active_wake_words) or "none",
         )
+
+        if self.speaker is not None:
+            loop.create_task(self.speaker.connect())
 
     async def stop(self) -> None:
         if self._server is not None:
@@ -777,6 +800,7 @@ class VoiceSatellite:
                 )
             else:
                 for url in urls:
+                    logger.info("Voice satellite %s: playing reply", self.name)
                     await self.speaker.play(url)
 
             # Let the speaker's last words die out before the mic reopens.
@@ -802,6 +826,7 @@ class VoiceSatellite:
     def _reply_finished(self) -> None:
         # Home Assistant takes this as "done playing" for TTS replies as well
         # as announcements; it's what returns the satellite entity to idle.
+        logger.info("Voice satellite %s: reply finished", self.name)
         self._send([VoiceAssistantAnnounceFinished()])
         self._announcing = False
 
