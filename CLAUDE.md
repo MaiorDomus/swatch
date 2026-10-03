@@ -23,7 +23,13 @@ client of this service.
 - **Audio monitors**: pulls RTSP audio from a camera and flags sustained,
   spectrally-steady loud noise (e.g. a running range hood fan), distinguishing it
   from speech/music by how much the frequency shape changes moment to moment.
-- Exposes both via a REST API (`docs/api.md`) — `/api/<label>/latest`,
+- **Voice satellites**: turn a camera's mic into a Home Assistant Assist satellite.
+  Local microWakeWord detection on the RTSP audio, then the audio is streamed to HA
+  over the ESPHome native API (swatch acts as the ESPHome device; HA adds it via its
+  ESPHome integration), and replies play on the camera speaker through UniFi Protect
+  talkback (`uiprotect`). Audio monitors and voice satellites on the same `rtsp_url`
+  share one `AudioSource` (one ffmpeg/RTSP connection).
+- Exposes detections via a REST API (`docs/api.md`) — `/api/<label>/latest`,
   `/api/detections` (on/off history), snapshot endpoints, and a `/api/colortest/*`
   pair for tuning color bounds against a real image.
 - Has its own web UI (Flutter app in `web/`) including a "Color Playground" for
@@ -42,7 +48,14 @@ Key source files:
 - `swatch/detection.py` — `AutoDetector` (per-camera polling thread that debounces
   raw per-frame results into sustained on/off state and records it to the DB) and
   `DetectionCleanup`.
-- `swatch/audio.py` — the audio monitor equivalent of the above for RTSP streams.
+- `swatch/audio.py` — `AudioSource` (one ffmpeg reader thread per stream, fanning PCM
+  out to subscribers) and `AudioMonitor`, the audio equivalent of `AutoDetector`.
+- `swatch/voice.py` — voice satellites: ESPHome API framing, wake words, the pipeline
+  state machine, and `ProtectSpeaker`. Runs on its own asyncio loop thread
+  (`VoiceSatelliteServer`); pipeline state is only changed on that loop, the audio
+  thread just schedules onto it. `tests/test_voice.py` drives it end to end with
+  aioesphomeapi's own client (what HA uses). `swatch/voice_models/` bundles the
+  "stop" model; the wake word models ship with `pymicro-wakeword`.
 - `swatch/snapshot.py` — saving/serving snapshot images (clean, masked, bounding-box
   annotated) to disk and via the API.
 - `swatch/http.py` — Flask routes (see `docs/api.md`).
@@ -88,6 +101,16 @@ and `swatch-beta/config.yaml`, plus a matching `CHANGELOG.md` entry in each) to
 actually pick up the change — purely bumping the version, no `Dockerfile` edits
 needed. See recent commits in that repo (e.g. "Bump to 3.2.17-local to pick
 up...") for the exact pattern to follow.
+
+## ffmpeg versions
+
+The image pins Debian bookworm, whose ffmpeg (5.1) doesn't verify rtsps certificates
+and rejects `-tls_verify` outright, while newer ffmpeg (7+, e.g. on a dev box)
+verifies by default and fails on UniFi Protect's self-signed certificate.
+`AudioSource` asks ffmpeg (`-h demuxer=rtsp`) once and only passes `-tls_verify 0`
+where it's supported -- keep that check if touching the ffmpeg command, and test
+changes inside the real image (`docker run --entrypoint=python3 ... -m unittest`),
+not just a local venv.
 
 ## Inspecting a live instance
 

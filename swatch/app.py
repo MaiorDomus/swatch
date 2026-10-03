@@ -11,7 +11,7 @@ from peewee import SqliteDatabase
 from peewee_migrate import Router
 from playhouse.sqliteq import SqliteQueueDatabase
 
-from swatch.audio import AudioMonitor
+from swatch.audio import AudioMonitor, AudioSource
 from swatch.config import SwatchConfig
 from swatch.const import CONST_CONFIG_FILE, CONST_DB_FILE, ENV_CONFIG, ENV_DB
 from swatch.http import create_app
@@ -45,6 +45,8 @@ class SwatchApp:
         self.__init_snapshot_cleanup__()
         self.__init_detection_cleanup__()
         self.__init_audio_monitors__()
+        self.__init_voice_satellites__()
+        self.__start_audio_sources__()
         self.__init_web_server__()
         self.processes_started = True
 
@@ -107,13 +109,60 @@ class SwatchApp:
         self.detection_cleanup = DetectionCleanup(self.config, self.stop_event)
         self.detection_cleanup.start()
 
+    def __get_audio_source__(
+        self, name: str, url: str, sample_rate: int
+    ) -> AudioSource:
+        """The shared source for url at sample_rate, so everything listening
+        to the same camera reads one stream."""
+        key = (url, sample_rate)
+
+        if key not in self.audio_sources:
+            self.audio_sources[key] = AudioSource(
+                url, sample_rate, self.stop_event, name=name
+            )
+
+        return self.audio_sources[key]
+
     def __init_audio_monitors__(self) -> None:
-        """Init the SwatchApp audio monitor threads."""
+        """Init the SwatchApp audio monitors."""
+        self.audio_sources: dict[tuple[str, int], AudioSource] = {}
         self.audio_monitors: dict[str, AudioMonitor] = {}
 
         for name, monitor_config in self.config.audio_monitors.items():
             self.audio_monitors[name] = AudioMonitor(monitor_config, self.stop_event)
-            self.audio_monitors[name].start()
+            self.__get_audio_source__(
+                name, monitor_config.rtsp_url, monitor_config.sample_rate
+            ).subscribe(self.audio_monitors[name])
+
+    def __init_voice_satellites__(self) -> None:
+        """Init the SwatchApp voice satellites and their API server thread."""
+        self.voice_server = None
+
+        if not self.config.voice_satellites:
+            return
+
+        # Imported here so installs without voice satellites don't need the
+        # wake word / ESPHome / UniFi Protect dependencies to load.
+        from swatch.voice import VoiceSatellite, VoiceSatelliteServer
+
+        satellites = []
+
+        for name, satellite_config in self.config.voice_satellites.items():
+            satellite = VoiceSatellite(satellite_config)
+            satellites.append(satellite)
+            # microWakeWord models expect 16 kHz audio.
+            self.__get_audio_source__(name, satellite_config.rtsp_url, 16000).subscribe(
+                satellite
+            )
+
+        self.voice_server = VoiceSatelliteServer(satellites, self.stop_event)
+        self.voice_server.start()
+        self.voice_server.ready.wait(timeout=10)
+
+    def __start_audio_sources__(self) -> None:
+        """Start reading every audio stream, once all its listeners are subscribed."""
+        for source in self.audio_sources.values():
+            source.start()
 
     def __init_web_server__(self) -> None:
         """Init the SwatchApp web server."""
@@ -152,8 +201,11 @@ class SwatchApp:
         for camera_process in self.camera_processes.values():
             camera_process.join()
 
-        for audio_monitor in self.audio_monitors.values():
-            audio_monitor.join()
+        for audio_source in self.audio_sources.values():
+            audio_source.join()
+
+        if self.voice_server is not None:
+            self.voice_server.join()
 
         # stop the db
         self.db.stop()

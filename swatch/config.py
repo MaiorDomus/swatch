@@ -255,6 +255,100 @@ class AudioMonitorConfig(SwatchBaseModel):
     )
 
 
+class ProtectConfig(SwatchBaseModel):
+    """UniFi Protect connection used to play replies through a camera's
+    speaker (talkback)."""
+
+    host: str = Field(title="UniFi Protect / UniFi OS console host or IP.")
+    port: int = Field(title="UniFi OS console HTTPS port.", default=443)
+    username: str = Field(
+        title=(
+            "Local UniFi OS account. Needs permission to use the camera's "
+            "talkback (Full Management on the camera)."
+        )
+    )
+    password: str = Field(title="Password for the local UniFi OS account.")
+    api_key: str | None = Field(
+        title=(
+            "Optional UniFi Protect integration API key. When set, talkback "
+            "sessions are requested through Protect's public API; otherwise "
+            "audio is sent straight to the camera's talkback port over UDP."
+        ),
+        default=None,
+    )
+    verify_ssl: bool = Field(
+        title="Verify the console's TLS certificate (self-signed by default).",
+        default=False,
+    )
+    camera: str = Field(
+        title="Name or id of the Protect camera whose speaker plays the replies."
+    )
+
+
+class VoiceSatelliteConfig(SwatchBaseModel):
+    """Turns a camera's microphone (and speaker, via UniFi Protect talkback)
+    into a Home Assistant Assist satellite, served over the ESPHome native
+    API so Home Assistant's ESPHome integration can add it."""
+
+    name: str | None = Field(
+        title="Voice satellite name.", pattern="^[a-zA-Z0-9_-]+$", default=None
+    )
+    friendly_name: str | None = Field(
+        title="Name shown in Home Assistant (default: the satellite name).",
+        default=None,
+    )
+    rtsp_url: str = Field(
+        title=(
+            "RTSP url to pull microphone audio from. Using the same url as an "
+            "audio monitor shares one stream between them."
+        )
+    )
+    port: int = Field(
+        title="TCP port for the ESPHome native API (one per satellite).",
+        default=6053,
+    )
+    wake_words: list[str] = Field(
+        title=(
+            "Wake word ids active at startup (at most 2). Built in: okay_nabu, "
+            "hey_jarvis, hey_mycroft, alexa; plus any microWakeWord model in "
+            "wake_word_dir. Home Assistant can change these at runtime."
+        ),
+        default_factory=lambda: ["okay_nabu"],
+        max_length=2,
+    )
+    wake_word_dir: str | None = Field(
+        title=(
+            "Directory of extra microWakeWord models (each a <id>.json config "
+            "next to its .tflite file), e.g. a custom trained wake word."
+        ),
+        default=None,
+    )
+    stop_word: bool = Field(
+        title='Listen for "stop" while a reply is playing, to cut it off.',
+        default=True,
+    )
+    refractory_seconds: float = Field(
+        title="Ignore further wake words for this long after one triggers.",
+        default=2.0,
+    )
+    echo_guard_seconds: float = Field(
+        title=(
+            "Keep the mic closed for this long after a reply finishes playing, "
+            "so the tail of the camera's own speaker audio isn't heard as the "
+            "start of a follow-up question or a wake word."
+        ),
+        default=0.5,
+    )
+    protect: ProtectConfig | None = Field(
+        title=(
+            "UniFi Protect connection for playing replies on the camera's "
+            "speaker. Without it the satellite still listens and runs "
+            "commands, but replies aren't spoken."
+        ),
+        default=None,
+    )
+
+
 class SwatchConfig(SwatchBaseModel):
     """Main configuration for SwatchApp."""
 
@@ -262,6 +356,9 @@ class SwatchConfig(SwatchBaseModel):
     cameras: dict[str, CameraConfig] = Field(title="Camera configuration.")
     audio_monitors: dict[str, AudioMonitorConfig] = Field(
         title="Audio monitors.", default_factory=dict
+    )
+    voice_satellites: dict[str, VoiceSatelliteConfig] = Field(
+        title="Voice satellites.", default_factory=dict
     )
 
     @property
@@ -284,6 +381,14 @@ class SwatchConfig(SwatchBaseModel):
             )
 
             config.audio_monitors[name] = monitor_config
+
+        for name, satellite in config.voice_satellites.items():
+            satellite_dict = satellite.model_dump(exclude_unset=True)
+            satellite_config: VoiceSatelliteConfig = (
+                VoiceSatelliteConfig.model_validate({"name": name, **satellite_dict})
+            )
+
+            config.voice_satellites[name] = satellite_config
 
         return config
 

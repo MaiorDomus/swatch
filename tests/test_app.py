@@ -69,3 +69,23 @@ class TestApp(unittest.TestCase):
 
         self.app.stop()  # should not raise KeyError
         self.app = None  # already stopped, don't stop again in tearDown
+
+    def test_monitor_and_satellite_on_one_camera_share_a_stream(self) -> None:
+        config_file = os.environ["CONFIG_FILE"]
+        url = os.path.join(self.tmp_dir, "missing.wav")
+        with open(config_file, "w") as f:
+            yaml.safe_dump(
+                {
+                    "objects": {},
+                    "cameras": {},
+                    "audio_monitors": {"hood": {"rtsp_url": url}},
+                    "voice_satellites": {"living_room": {"rtsp_url": url, "port": 0}},
+                },
+                f,
+            )
+
+        self.app = SwatchApp()
+
+        assert list(self.app.audio_sources) == [(url, 16000)]
+        assert self.app.voice_server is not None
+        assert self.app.voice_server.is_alive()

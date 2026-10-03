@@ -13,10 +13,12 @@ consistent with the rest of swatch's detection code.
 """
 
 import datetime
+import functools
 import logging
 import multiprocessing
 import subprocess
 import threading
+from typing import Protocol
 
 import numpy as np
 
@@ -28,6 +30,10 @@ from swatch.util import get_random_suffix
 logger = logging.getLogger(__name__)
 
 SILENT_DBFS = -120.0
+
+# 64 ms at 16 kHz: short enough for wake word detection to react quickly,
+# while audio monitors buffer these up into their own longer windows.
+SOURCE_CHUNK_SAMPLES = 1024
 
 
 def compute_rms_dbfs(samples: np.ndarray) -> float:
@@ -197,46 +203,80 @@ def compute_spectral_flux(
 SoundStateClassifier = SustainedStateTracker
 
 
-class AudioMonitor(threading.Thread):
-    """Background thread that pulls audio from a stream via ffmpeg and
-    classifies whether sustained hood-like noise is currently audible."""
+@functools.cache
+def rtsp_has_tls_verify() -> bool:
+    """Whether this ffmpeg's rtsp demuxer takes -tls_verify. Newer builds
+    (7.x+) verify rtsps certificates by default and need it turned off;
+    older ones (e.g. Debian bookworm's 5.1) don't verify, and reject the
+    option outright."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-h", "demuxer=rtsp"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+    return "-tls_verify" in result.stdout
+
+
+class AudioConsumer(Protocol):
+    """Anything that wants PCM audio from an AudioSource."""
+
+    def on_audio(self, raw: bytes) -> None:
+        """Called with each chunk of 16-bit mono PCM, in stream order."""
+
+    def on_stream_end(self) -> None:
+        """Called once an ffmpeg session ends (stream dropped, crashed, file
+        reached EOF, or stop_event was set), before any reconnect."""
+
+    def on_disconnect(self) -> None:
+        """Called after on_stream_end when the source is about to retry the
+        stream rather than having been stopped -- i.e. when whatever was
+        being heard can no longer be assumed to still be there."""
+
+
+class AudioSource(threading.Thread):
+    """Background thread that pulls audio from a stream via ffmpeg and hands
+    the decoded PCM to every subscribed consumer.
+
+    One source per (url, sample_rate) means an audio monitor and a voice
+    satellite listening to the same camera share a single RTSP connection --
+    cameras (UniFi Protect in particular) only allow a handful of those, and
+    decoding the same stream twice is wasted CPU anyway.
+    """
 
     def __init__(
         self,
-        config: AudioMonitorConfig,
+        url: str,
+        sample_rate: int,
         stop_event: multiprocessing.Event,
-        input_source: str | None = None,
+        name: str | None = None,
+        chunk_samples: int = SOURCE_CHUNK_SAMPLES,
     ) -> None:
-        """Initialize the audio monitor.
-
-        input_source overrides config.rtsp_url with an arbitrary ffmpeg input
-        (e.g. a local file path), which is what makes this testable without a
-        real camera.
-        """
         threading.Thread.__init__(self)
-        # AudioMonitor is only ever constructed with monitors sourced from
-        # SwatchConfig.runtime_config, which always stamps config.name.
-        assert config.name is not None
-        self.name = f"audio_monitor_{config.name}"
-        self.monitor_name: str = config.name
-        self.config = config
+        self.name = f"audio_source_{name}" if name else "audio_source"
+        self.url = url
+        self.sample_rate = sample_rate
         self.stop_event = stop_event
-        self._input_source = input_source or config.rtsp_url
-        self.is_on = False
-        self._classifier = SoundStateClassifier(
-            config.window_seconds, config.min_on_seconds, config.min_off_seconds
-        )
-        # Tracks the currently-open Detection row (if any), so on/off
-        # history for audio monitors shows up in /api/detections the same
-        # way object detections' does -- lets the dashboard build one
-        # combined "last N on/off" table from a single endpoint.
-        self._was_on = False
-        self._open_detection_id: str | None = None
+        self.chunk_bytes = chunk_samples * 2
+        self._consumers: list[AudioConsumer] = []
+
+    def subscribe(self, consumer: AudioConsumer) -> None:
+        """Start delivering audio to consumer. Must be called before start()."""
+        self._consumers.append(consumer)
 
     def _build_ffmpeg_cmd(self) -> list[str]:
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
 
-        if self._input_source.startswith("rtsp"):
+        if self.url.startswith("rtsps") and rtsp_has_tls_verify():
+            # UniFi Protect's rtsps streams use a self-signed certificate,
+            # which newer ffmpeg builds reject by default.
+            cmd += ["-tls_verify", "0"]
+
+        if self.url.startswith("rtsp"):
             cmd += [
                 "-rtsp_transport",
                 "tcp",
@@ -254,12 +294,12 @@ class AudioMonitor(threading.Thread):
 
         cmd += [
             "-i",
-            self._input_source,
+            self.url,
             "-vn",
             "-ac",
             "1",
             "-ar",
-            str(self.config.sample_rate),
+            str(self.sample_rate),
             "-f",
             "s16le",
             "-acodec",
@@ -267,6 +307,116 @@ class AudioMonitor(threading.Thread):
             "pipe:1",
         ]
         return cmd
+
+    def _dispatch(self, method: str, *args: bytes) -> None:
+        """Call method on every consumer, so one consumer raising can't
+        starve the others (or kill the stream) of audio."""
+        for consumer in self._consumers:
+            try:
+                getattr(consumer, method)(*args)
+            except Exception:
+                logger.exception("Audio consumer %s failed in %s", consumer, method)
+
+    def process_stream(self) -> None:
+        """Run one ffmpeg session end-to-end, delivering audio to consumers
+        until it stops (stream ended, crashed, or stop_event was set)."""
+        process = subprocess.Popen(
+            self._build_ffmpeg_cmd(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+        try:
+            assert process.stdout is not None
+
+            while not self.stop_event.is_set():
+                raw = process.stdout.read(self.chunk_bytes)
+
+                if not raw:
+                    break  # ffmpeg exited / stream ended
+
+                self._dispatch("on_audio", raw)
+        finally:
+            process.terminate()
+
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+            if process.stdout is not None:
+                process.stdout.close()
+
+            self._dispatch("on_stream_end")
+
+            # 0/None: exited cleanly on its own (e.g. end of a local file).
+            # -15: killed by our SIGTERM directly (rare -- usually caught, see below).
+            # 255: ffmpeg's own exit code when it catches SIGTERM/SIGINT and shuts
+            # down cleanly, which is what happens every time we call terminate()
+            # above and ffmpeg was still running -- this is the common case, not
+            # an error.
+            if process.returncode not in (0, None, -15, 255):
+                logger.warning(
+                    "ffmpeg for %s exited with code %s",
+                    self.name,
+                    process.returncode,
+                )
+
+    def run(self) -> None:
+        logger.info("Starting %s", self.name)
+        reconnect_backoff_seconds = 5
+
+        while not self.stop_event.is_set():
+            try:
+                self.process_stream()
+            except Exception:
+                logger.exception("%s crashed, retrying", self.name)
+
+            self._dispatch("on_disconnect")
+
+            if self.stop_event.wait(reconnect_backoff_seconds):
+                break
+
+        logger.info("Stopping %s", self.name)
+
+
+class AudioMonitor:
+    """Classifies whether sustained hood-like noise is currently audible, from
+    the audio an AudioSource feeds it."""
+
+    def __init__(
+        self,
+        config: AudioMonitorConfig,
+        stop_event: multiprocessing.Event,
+        input_source: str | None = None,
+    ) -> None:
+        """Initialize the audio monitor.
+
+        input_source overrides config.rtsp_url with an arbitrary ffmpeg input
+        (e.g. a local file path) for _process_stream(), which is what makes
+        this testable without a real camera.
+        """
+        # AudioMonitor is only ever constructed with monitors sourced from
+        # SwatchConfig.runtime_config, which always stamps config.name.
+        assert config.name is not None
+        self.monitor_name: str = config.name
+        self.config = config
+        self.stop_event = stop_event
+        self._input_source = input_source or config.rtsp_url
+        self.is_on = False
+        self._classifier = SoundStateClassifier(
+            config.window_seconds, config.min_on_seconds, config.min_off_seconds
+        )
+        self._window_bytes = int(config.sample_rate * config.window_seconds) * 2
+        self._pending = bytearray()
+        self._prev_spectrum: np.ndarray | None = None
+        # Tracks the currently-open Detection row (if any), so on/off
+        # history for audio monitors shows up in /api/detections the same
+        # way object detections' does -- lets the dashboard build one
+        # combined "last N on/off" table from a single endpoint.
+        self._was_on = False
+        self._open_detection_id: str | None = None
 
     def __record_transition__(self) -> None:
         """Create/end a Detection row whenever is_on flips, mirroring
@@ -286,9 +436,9 @@ class AudioMonitor(threading.Thread):
                 top_area=0,
             ).execute()
         elif not self.is_on and self._was_on and self._open_detection_id:
-            Detection.update(
-                end_time=datetime.datetime.now().timestamp()
-            ).where(Detection.id == self._open_detection_id).execute()
+            Detection.update(end_time=datetime.datetime.now().timestamp()).where(
+                Detection.id == self._open_detection_id
+            ).execute()
             self._open_detection_id = None
 
         self._was_on = self.is_on
@@ -309,131 +459,101 @@ class AudioMonitor(threading.Thread):
             self.config.min_off_seconds,
         )
 
-    def _process_stream(self) -> None:
-        """Run one ffmpeg session end-to-end, classifying audio until it
-        stops (stream ended, crashed, or stop_event was set)."""
-        window_bytes = int(self.config.sample_rate * self.config.window_seconds) * 2
+    def on_audio(self, raw: bytes) -> None:
+        """Buffer the source's chunks into window_seconds-long windows and
+        classify each one."""
+        self._pending += raw
 
-        process = subprocess.Popen(
-            self._build_ffmpeg_cmd(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+        while len(self._pending) >= self._window_bytes:
+            window = bytes(self._pending[: self._window_bytes])
+            del self._pending[: self._window_bytes]
+            self._process_window(window)
+
+    def on_stream_end(self) -> None:
+        """Classify whatever partial window was left when the stream ended
+        (the same as a short final read used to be), then start the next
+        session from scratch."""
+        if len(self._pending) >= 2:
+            self._process_window(bytes(self._pending[: len(self._pending) // 2 * 2]))
+
+        self._pending.clear()
+        self._prev_spectrum = None
+
+    def on_disconnect(self) -> None:
+        self.__close_stale_detection__()
+
+    def _process_window(self, raw: bytes) -> None:
+        samples = np.frombuffer(raw, dtype=np.int16)
+        loudness_db = compute_rms_dbfs(samples)
+        magnitude = compute_fft_magnitude(samples) if samples.size > 0 else None
+        curr_spectrum = compute_normalized_spectrum(
+            samples,
+            sample_rate=self.config.sample_rate,
+            cutoff_hz=self.config.flux_band_cutoff_hz,
+            magnitude=magnitude,
         )
 
-        try:
-            prev_spectrum: np.ndarray | None = None
-            assert process.stdout is not None
+        flux = (
+            compute_spectral_flux(self._prev_spectrum, curr_spectrum)
+            if self._prev_spectrum is not None
+            else 0.0
+        )
+        self._prev_spectrum = curr_spectrum
 
-            while not self.stop_event.is_set():
-                raw = process.stdout.read(window_bytes)
+        # With flux_band_cutoff_hz set, a loud sound with (almost)
+        # none of its real energy below the cutoff can still leak
+        # enough there (FFT windowing sidelobes) to look like a
+        # steady low-frequency shape once force-normalized to unit
+        # norm -- require a real share of this window's energy to
+        # actually be down there before trusting that shape.
+        has_band_energy = (
+            compute_low_band_energy_ratio(
+                samples,
+                self.config.sample_rate,
+                self.config.flux_band_cutoff_hz,
+                magnitude=magnitude,
+            )
+            >= self.config.min_band_energy_ratio
+            if self.config.flux_band_cutoff_hz is not None
+            else True
+        )
 
-                if not raw:
-                    break  # ffmpeg exited / stream ended
-
-                samples = np.frombuffer(raw, dtype=np.int16)
-                loudness_db = compute_rms_dbfs(samples)
-                magnitude = (
-                    compute_fft_magnitude(samples) if samples.size > 0 else None
-                )
-                curr_spectrum = compute_normalized_spectrum(
+        # Optional absolute-level check on the same low band (the
+        # whole spectrum if no cutoff is set): unlike the ratio above,
+        # it isn't dragged down by other sound playing on top of the
+        # fan, and quiet leakage below the cutoff can't reach it.
+        has_band_level = (
+            (
+                compute_band_rms_dbfs(
                     samples,
-                    sample_rate=self.config.sample_rate,
-                    cutoff_hz=self.config.flux_band_cutoff_hz,
-                    magnitude=magnitude,
+                    self.config.sample_rate,
+                    self.config.flux_band_cutoff_hz,
                 )
+                if self.config.flux_band_cutoff_hz is not None
+                else loudness_db
+            )
+            >= self.config.min_band_level_db
+            if self.config.min_band_level_db is not None
+            else True
+        )
 
-                flux = (
-                    compute_spectral_flux(prev_spectrum, curr_spectrum)
-                    if prev_spectrum is not None
-                    else 0.0
-                )
-                prev_spectrum = curr_spectrum
+        is_candidate = (
+            loudness_db >= self.config.threshold_db
+            and has_band_energy
+            and has_band_level
+            and flux <= self.config.max_spectral_flux
+        )
+        self.is_on = self._classifier.update(is_candidate)
+        self.__record_transition__()
 
-                # With flux_band_cutoff_hz set, a loud sound with (almost)
-                # none of its real energy below the cutoff can still leak
-                # enough there (FFT windowing sidelobes) to look like a
-                # steady low-frequency shape once force-normalized to unit
-                # norm -- require a real share of this window's energy to
-                # actually be down there before trusting that shape.
-                has_band_energy = (
-                    compute_low_band_energy_ratio(
-                        samples,
-                        self.config.sample_rate,
-                        self.config.flux_band_cutoff_hz,
-                        magnitude=magnitude,
-                    )
-                    >= self.config.min_band_energy_ratio
-                    if self.config.flux_band_cutoff_hz is not None
-                    else True
-                )
-
-                # Optional absolute-level check on the same low band (the
-                # whole spectrum if no cutoff is set): unlike the ratio above,
-                # it isn't dragged down by other sound playing on top of the
-                # fan, and quiet leakage below the cutoff can't reach it.
-                has_band_level = (
-                    (
-                        compute_band_rms_dbfs(
-                            samples,
-                            self.config.sample_rate,
-                            self.config.flux_band_cutoff_hz,
-                        )
-                        if self.config.flux_band_cutoff_hz is not None
-                        else loudness_db
-                    )
-                    >= self.config.min_band_level_db
-                    if self.config.min_band_level_db is not None
-                    else True
-                )
-
-                is_candidate = (
-                    loudness_db >= self.config.threshold_db
-                    and has_band_energy
-                    and has_band_level
-                    and flux <= self.config.max_spectral_flux
-                )
-                self.is_on = self._classifier.update(is_candidate)
-                self.__record_transition__()
-        finally:
-            process.terminate()
-
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-
-            if process.stdout is not None:
-                process.stdout.close()
-
-            # 0/None: exited cleanly on its own (e.g. end of a local file).
-            # -15: killed by our SIGTERM directly (rare -- usually caught, see below).
-            # 255: ffmpeg's own exit code when it catches SIGTERM/SIGINT and shuts
-            # down cleanly, which is what happens every time we call terminate()
-            # above and ffmpeg was still running -- this is the common case, not
-            # an error.
-            if process.returncode not in (0, None, -15, 255):
-                logger.warning(
-                    "ffmpeg for audio monitor %s exited with code %s",
-                    self.monitor_name,
-                    process.returncode,
-                )
-
-    def run(self) -> None:
-        logger.info("Starting audio monitor for %s", self.monitor_name)
-        reconnect_backoff_seconds = 5
-
-        while not self.stop_event.is_set():
-            try:
-                self._process_stream()
-            except Exception:
-                logger.exception(
-                    "Audio monitor for %s crashed, retrying", self.monitor_name
-                )
-
-            self.__close_stale_detection__()
-
-            if self.stop_event.wait(reconnect_backoff_seconds):
-                break
-
-        logger.info("Stopping audio monitor for %s", self.monitor_name)
+    def _process_stream(self) -> None:
+        """Run one ffmpeg session against this monitor's own input, without
+        the reconnect loop -- what the tests use in place of a real camera."""
+        source = AudioSource(
+            self._input_source,
+            self.config.sample_rate,
+            self.stop_event,
+            name=self.monitor_name,
+        )
+        source.subscribe(self)
+        source.process_stream()

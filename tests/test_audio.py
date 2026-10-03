@@ -8,6 +8,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 from peewee import SqliteDatabase
@@ -15,6 +16,7 @@ from peewee import SqliteDatabase
 from swatch.audio import (
     SILENT_DBFS,
     AudioMonitor,
+    AudioSource,
     SoundStateClassifier,
     compute_band_rms_dbfs,
     compute_low_band_energy_ratio,
@@ -696,6 +698,96 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
             thread.join(timeout=10)
 
         assert not thread.is_alive()
+
+
+class RecordingConsumer:
+    def __init__(self) -> None:
+        self.audio = bytearray()
+        self.events: list[str] = []
+
+    def on_audio(self, raw: bytes) -> None:
+        self.audio += raw
+
+    def on_stream_end(self) -> None:
+        self.events.append("end")
+
+    def on_disconnect(self) -> None:
+        self.events.append("disconnect")
+
+
+class FailingConsumer(RecordingConsumer):
+    def on_audio(self, raw: bytes) -> None:
+        raise RuntimeError("boom")
+
+
+class TestAudioSource(unittest.TestCase):
+    """Testing that one stream fans out to everything listening to it."""
+
+    def _cmd(self, url: str, has_tls_verify: bool) -> list[str]:
+        with mock.patch(
+            "swatch.audio.rtsp_has_tls_verify", return_value=has_tls_verify
+        ):
+            return AudioSource(url, 16000, multiprocessing.Event())._build_ffmpeg_cmd()
+
+    def test_rtsps_skips_certificate_verification(self) -> None:
+        cmd = self._cmd("rtsps://cam/abc", True)
+        assert cmd[cmd.index("-tls_verify") + 1] == "0"
+
+    def test_tls_verify_is_left_out_where_ffmpeg_lacks_it(self) -> None:
+        """Debian bookworm's ffmpeg 5.1 rejects the option outright."""
+        assert "-tls_verify" not in self._cmd("rtsps://cam/abc", False)
+
+    def test_plain_rtsp_has_no_tls_options(self) -> None:
+        assert "-tls_verify" not in self._cmd("rtsp://cam/abc", True)
+
+    @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is not installed")
+    def test_every_consumer_gets_the_same_audio(self) -> None:
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp_dir, True)
+        wav = str(Path(tmp_dir) / "tone.wav")
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=1",
+                "-ar",
+                "16000",
+                wav,
+            ],
+            check=True,
+        )
+
+        source = AudioSource(wav, 16000, multiprocessing.Event())
+        first, second = RecordingConsumer(), RecordingConsumer()
+        source.subscribe(first)
+        source.subscribe(FailingConsumer())  # mustn't starve the others
+        source.subscribe(second)
+        source.process_stream()
+
+        assert len(first.audio) == 16000 * 2
+        assert first.audio == second.audio
+        assert first.events == second.events == ["end"]
+
+    def test_disconnect_is_signalled_before_a_retry(self) -> None:
+        stop_event = multiprocessing.Event()
+        source = AudioSource("/nonexistent/input.wav", 16000, stop_event)
+        consumer = RecordingConsumer()
+        source.subscribe(consumer)
+        source.start()
+
+        deadline = time.monotonic() + 10
+        while "disconnect" not in consumer.events and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        stop_event.set()
+        source.join(timeout=10)
+        assert consumer.events[:2] == ["end", "disconnect"]
 
 
 if __name__ == "__main__":

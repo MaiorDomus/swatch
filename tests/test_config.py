@@ -160,6 +160,50 @@ class TestConfig(unittest.TestCase):
         assert monitor.threshold_db == -20.0
         assert monitor.min_on_seconds == 3.0
 
+    def test_voice_satellites_default_to_empty(self) -> None:
+        assert SwatchConfig(**self.minimal).voice_satellites == {}
+
+    def test_voice_satellite_defaults(self) -> None:
+        config_dict = {
+            **self.minimal,
+            "voice_satellites": {
+                "living_room": {"rtsp_url": "rtsps://192.168.1.1:7441/abc"},
+            },
+        }
+        satellite = SwatchConfig(**config_dict).runtime_config.voice_satellites[
+            "living_room"
+        ]
+        assert satellite.name == "living_room"
+        assert satellite.port == 6053
+        assert satellite.wake_words == ["okay_nabu"]
+        assert satellite.stop_word is True
+        assert satellite.protect is None
+
+    def test_voice_satellite_protect_settings(self) -> None:
+        config_dict = {
+            **self.minimal,
+            "voice_satellites": {
+                "living_room": {
+                    "rtsp_url": "rtsps://192.168.1.1:7441/abc",
+                    "protect": {
+                        "host": "192.168.1.1",
+                        "username": "swatch",
+                        "password": "secret",
+                        "camera": "Living Room",
+                    },
+                },
+            },
+        }
+        protect = (
+            SwatchConfig(**config_dict)
+            .runtime_config.voice_satellites["living_room"]
+            .protect
+        )
+        assert protect is not None
+        assert protect.port == 443
+        assert protect.verify_ssl is False
+        assert protect.api_key is None
+
 
 class TestColorVariantGeometryOverrides(unittest.TestCase):
     """A color_variant can optionally override its object's geometry

@@ -237,3 +237,91 @@ audio_monitors:
     # activity table and via /api/detections (Default: shown below).
     retain_days: 1
 ```
+
+### `voice_satellites`
+
+Turns a camera's microphone into a Home Assistant [Assist](https://www.home-assistant.io/voice_control/)
+satellite, with replies played through the camera's own speaker via UniFi Protect
+talkback. Swatch serves each satellite over the ESPHome native API, the same protocol
+ESPHome voice devices (and the Open Home Foundation's Linux Voice Assistant) use, so
+Home Assistant adds it through its regular **ESPHome** integration: Settings → Devices &
+services → Add integration → ESPHome → host = the machine running swatch, port = the
+satellite's `port`. Home Assistant then creates an `assist_satellite` entity for it,
+and the device page lets you pick the Assist pipeline (language, speech-to-text,
+conversation agent, text-to-speech) and the wake words.
+
+How it works:
+
+- The wake word is detected locally in swatch, on the camera's RTSP audio, using
+  [microWakeWord](https://github.com/kahrendt/microWakeWord) models. Built in:
+  `okay_nabu` (also trained on Dutch, French, German, Italian, Spanish and Swedish
+  speakers), `hey_jarvis`, `hey_mycroft`, `alexa`. Up to two can be active at once.
+- After the wake word, swatch streams the audio to Home Assistant, which runs the
+  pipeline. Your commands can be in any language your pipeline supports -- the wake
+  word only starts the listening.
+- The reply (and any `assist_satellite.announce` / `start_conversation`) is played on
+  the camera's speaker. Wake words are ignored while a pipeline runs or a reply plays,
+  so the camera can't wake itself up; only "stop" is listened for then, which cuts the
+  reply off.
+- A satellite on the same `rtsp_url` as an audio monitor shares its stream, so the
+  camera only serves one RTSP connection for both.
+
+Without a `protect` block the satellite still listens and runs commands, it just
+doesn't speak the replies.
+
+The connection is plaintext (no ESPHome API encryption), like Linux Voice Assistant's;
+keep the port on your LAN. Expose the port from the container (the add-on publishes
+6053 by default).
+
+```yaml
+# OPTIONAL: Define voice satellites that turn a camera's microphone (and speaker) into
+# a Home Assistant Assist satellite.
+voice_satellites:
+  # REQUIRED: Name of the voice satellite.
+  living_room:
+    # OPTIONAL: Name shown in Home Assistant (Default: the satellite name, title-cased).
+    friendly_name: "Living Room Camera"
+    # REQUIRED: RTSP url to pull microphone audio from. Using the same url as an audio
+    # monitor shares one stream between them.
+    rtsp_url: "rtsps://192.168.1.1:7441/abcdefghijk"
+    # OPTIONAL: TCP port Home Assistant connects to (ESPHome native API). Each
+    # satellite needs its own (Default: shown below).
+    port: 6053
+    # OPTIONAL: Wake words active at startup, at most 2. Home Assistant can change them
+    # at runtime from the device page; they go back to these on a swatch restart
+    # (Default: shown below).
+    wake_words:
+      - okay_nabu
+    # OPTIONAL: Directory of extra microWakeWord models, each a <id>.json config next to
+    # its .tflite file (the format ESPHome and Linux Voice Assistant use), e.g. a
+    # custom-trained wake word. They're offered to Home Assistant alongside the built-in
+    # ones (Default: none).
+    # wake_word_dir: /config/wake_words
+    # OPTIONAL: Listen for "stop" while a reply is playing, to cut it off
+    # (Default: shown below).
+    stop_word: true
+    # OPTIONAL: Ignore further wake words for this many seconds after one triggers
+    # (Default: shown below).
+    refractory_seconds: 2.0
+    # OPTIONAL: Keep the mic closed for this many seconds after a reply finishes, so the
+    # tail of the speaker's own audio isn't heard as a follow-up question
+    # (Default: shown below).
+    echo_guard_seconds: 0.5
+    # OPTIONAL: UniFi Protect connection for playing replies on the camera's speaker.
+    protect:
+      # REQUIRED: UniFi OS console host or IP.
+      host: 192.168.1.1
+      # OPTIONAL: Console HTTPS port (Default: shown below).
+      port: 443
+      # REQUIRED: A local UniFi OS account allowed to use the camera's talkback.
+      username: swatch
+      password: "your-password"
+      # OPTIONAL: UniFi Protect integration API key. When set, talkback sessions are
+      # requested through Protect's public API; otherwise audio is sent straight to the
+      # camera's talkback port over UDP (Default: none).
+      # api_key: ...
+      # OPTIONAL: Verify the console's TLS certificate (Default: shown below).
+      verify_ssl: false
+      # REQUIRED: Name or id of the Protect camera whose speaker plays the replies.
+      camera: "G6 Instant"
+```

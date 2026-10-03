@@ -1,3 +1,4 @@
+aioesphomeapi == 46.*
 colorthief
 Flask == 3.1.*
 mypy == 2.3.0
@@ -7,5 +8,7 @@ peewee == 4.3.*
 peewee_migrate == 1.15.*
 pillow
 pydantic == 2.13.*
+pymicro-wakeword == 2.*
 PyYAML == 6.0.*
 requests == 2.34.*
+uiprotect == 17.*
