@@ -261,8 +261,7 @@ How it works:
   word only starts the listening.
 - The reply (and any `assist_satellite.announce` / `start_conversation`) is played on
   the camera's speaker. Wake words are ignored while a pipeline runs or a reply plays,
-  so the camera can't wake itself up; only "stop" is listened for then, which cuts the
-  reply off.
+  so the camera can't wake itself up.
 - A satellite on the same `rtsp_url` as an audio monitor shares its stream, so the
   camera only serves one RTSP connection for both.
 
@@ -297,9 +296,12 @@ voice_satellites:
     # custom-trained wake word. They're offered to Home Assistant alongside the built-in
     # ones (Default: none).
     # wake_word_dir: /config/wake_words
-    # OPTIONAL: Listen for "stop" while a reply is playing, to cut it off
+    # OPTIONAL: Listen for "stop" while a reply is playing, to cut it off. Off by
+    # default: a camera has no echo cancellation, so its mic hears the reply itself and
+    # the "stop" model fires on it -- tested on a G6 Instant, every reply got cut off
+    # about 1.5 seconds in. Only worth trying with the speaker volume turned well down
     # (Default: shown below).
-    stop_word: true
+    stop_word: false
     # OPTIONAL: Ignore further wake words for this many seconds after one triggers
     # (Default: shown below).
     refractory_seconds: 2.0
@@ -324,4 +326,8 @@ voice_satellites:
       verify_ssl: false
       # REQUIRED: Name or id of the Protect camera whose speaker plays the replies.
       camera: "G6 Instant"
+      # OPTIONAL: Set the camera's speaker volume (0-100) in UniFi Protect when
+      # swatch connects. Protect defaults cameras to 100, which is loud for replies
+      # (Default: unset, leaves Protect's setting alone).
+      speaker_volume: 60
 ```

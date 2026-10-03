@@ -212,6 +212,14 @@ class ProtectSpeaker:
                 if not camera.feature_flags.has_speaker:
                     raise ValueError(f"Camera {camera.name} has no speaker")
 
+                volume = self.config.speaker_volume
+                if (
+                    volume is not None
+                    and camera.speaker_settings.speaker_volume != volume
+                ):
+                    await camera.set_speaker_volume(volume)
+                    logger.info("Set %s speaker volume to %s", camera.name, volume)
+
                 self._camera = camera
                 return camera
 

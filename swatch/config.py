@@ -283,6 +283,15 @@ class ProtectConfig(SwatchBaseModel):
     camera: str = Field(
         title="Name or id of the Protect camera whose speaker plays the replies."
     )
+    speaker_volume: int | None = Field(
+        title=(
+            "Set the camera's speaker volume (0-100) in UniFi Protect when "
+            "connecting. Unset leaves Protect's own setting alone."
+        ),
+        default=None,
+        ge=0,
+        le=100,
+    )
 
 
 class VoiceSatelliteConfig(SwatchBaseModel):
@@ -324,8 +333,12 @@ class VoiceSatelliteConfig(SwatchBaseModel):
         default=None,
     )
     stop_word: bool = Field(
-        title='Listen for "stop" while a reply is playing, to cut it off.',
-        default=True,
+        title=(
+            'Listen for "stop" while a reply is playing, to cut it off. Off by '
+            "default: a camera has no echo cancellation, so its mic hears the "
+            "reply itself and the stop model fires on it, cutting replies off."
+        ),
+        default=False,
     )
     refractory_seconds: float = Field(
         title="Ignore further wake words for this long after one triggers.",

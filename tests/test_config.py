@@ -8,6 +8,7 @@ from swatch.config import (
     AudioMonitorConfig,
     CameraConfig,
     ColorVariantConfig,
+    ProtectConfig,
     SnapshotConfig,
     SwatchConfig,
 )
@@ -176,7 +177,7 @@ class TestConfig(unittest.TestCase):
         assert satellite.name == "living_room"
         assert satellite.port == 6053
         assert satellite.wake_words == ["okay_nabu"]
-        assert satellite.stop_word is True
+        assert satellite.stop_word is False
         assert satellite.protect is None
 
     def test_voice_satellite_protect_settings(self) -> None:
@@ -203,6 +204,13 @@ class TestConfig(unittest.TestCase):
         assert protect.port == 443
         assert protect.verify_ssl is False
         assert protect.api_key is None
+        assert protect.speaker_volume is None
+
+    def test_speaker_volume_must_be_a_percentage(self) -> None:
+        with self.assertRaises(ValidationError):
+            ProtectConfig(
+                host="h", username="u", password="p", camera="c", speaker_volume=150
+            )
 
 
 class TestColorVariantGeometryOverrides(unittest.TestCase):
