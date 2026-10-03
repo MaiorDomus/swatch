@@ -26,11 +26,14 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import multiprocessing
 import os
+import shutil
 import tempfile
 import threading
 import time
+import wave
 from collections.abc import Iterable
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -111,6 +114,46 @@ def _esphome_version() -> str:
         return "unknown"
 
 
+# Two-note cues: rising when the satellite starts listening, falling when
+# it stops. Generated rather than shipped, short and quiet on purpose.
+WAKE_CUE_NOTES = (880.0, 1320.0)
+DONE_CUE_NOTES = (1320.0, 880.0)
+CUE_SAMPLE_RATE = 24000
+CUE_AMPLITUDE = 0.15
+CUE_NOTE_SECONDS = 0.09
+CUE_GAP_SECONDS = 0.03
+CUE_FADE_SECONDS = 0.012
+
+
+def write_cue(path: str, notes: Iterable[float]) -> None:
+    """Write a short, soft sequence of sine notes (with fades, so they
+    don't click) to a 16-bit mono WAV file."""
+    rate = CUE_SAMPLE_RATE
+    note_len = int(CUE_NOTE_SECONDS * rate)
+    fade_len = int(CUE_FADE_SECONDS * rate)
+    gap = b"\x00\x00" * int(CUE_GAP_SECONDS * rate)
+    frames = bytearray()
+
+    for freq in notes:
+        for i in range(note_len):
+            edge = min(i, note_len - 1 - i)
+            envelope = (
+                0.5 - 0.5 * math.cos(math.pi * edge / fade_len)
+                if edge < fade_len
+                else 1.0
+            )
+            value = CUE_AMPLITUDE * envelope * math.sin(2 * math.pi * freq * i / rate)
+            frames += int(value * 32767).to_bytes(2, "little", signed=True)
+
+        frames += gap
+
+    with wave.open(path, "wb") as cue:
+        cue.setnchannels(1)
+        cue.setsampwidth(2)
+        cue.setframerate(rate)
+        cue.writeframes(bytes(frames))
+
+
 def satellite_mac_address(name: str) -> str:
     """A stable, locally-administered MAC for the satellite: Home Assistant's
     ESPHome integration keys the device on it, so it must survive restarts
@@ -188,6 +231,8 @@ class ProtectSpeaker:
         self.config = config
         self._client: Any = None
         self._camera: Any = None
+        # The camera plays one thing at a time: cues and replies queue up.
+        self._play_lock = asyncio.Lock()
 
     async def _get_camera(self) -> Any:
         if self._camera is not None:
@@ -270,7 +315,8 @@ class ProtectSpeaker:
         path = await self._download(url) if url.startswith("http") else url
 
         try:
-            await self._play_file(path)
+            async with self._play_lock:
+                await self._play_file(path)
         finally:
             if path != url:
                 os.unlink(path)
@@ -516,6 +562,20 @@ class VoiceSatellite:
         self._accepted = False
         self._pending_mic: list[bytes] = []
         self._pending_mic_bytes = 0
+        self._done_cue_pending = False
+        self._cue_dir: str | None = None
+        self._cues: dict[str, str] = {}
+
+        if self.speaker is not None and (config.wake_sound or config.done_sound):
+            self._cue_dir = tempfile.mkdtemp(prefix=f"swatch-{self.name}-cues-")
+
+            for cue, enabled, notes in (
+                ("wake", config.wake_sound, WAKE_CUE_NOTES),
+                ("done", config.done_sound, DONE_CUE_NOTES),
+            ):
+                if enabled:
+                    self._cues[cue] = os.path.join(self._cue_dir, f"{cue}.wav")
+                    write_cue(self._cues[cue], notes)
 
     # -- lifecycle (loop thread) --------------------------------------------
 
@@ -549,6 +609,9 @@ class VoiceSatellite:
                 await self.speaker.close()
             except Exception:
                 logger.debug("Error closing UniFi Protect session", exc_info=True)
+
+        if self._cue_dir is not None:
+            shutil.rmtree(self._cue_dir, ignore_errors=True)
 
     # -- wake word configuration --------------------------------------------
 
@@ -775,6 +838,8 @@ class VoiceSatellite:
             [VoiceAssistantRequest(start=True, wake_word_phrase=wake_word_phrase)]
         )
         self.streaming_audio = True
+        self._done_cue_pending = True
+        self._play_cue("wake")
 
     def _mic_chunk(self, raw: bytes) -> None:
         """Send mic audio for the current run -- or, until Home Assistant has
@@ -825,6 +890,10 @@ class VoiceSatellite:
         ):
             self.streaming_audio = False
 
+            if self._done_cue_pending:
+                self._done_cue_pending = False
+                self._play_cue("done")
+
             if text := data.get("text"):
                 logger.info("Voice satellite %s: heard %r", self.name, text)
         elif event_type == VoiceAssistantEventType.VOICE_ASSISTANT_INTENT_PROGRESS:
@@ -861,6 +930,24 @@ class VoiceSatellite:
         self._announcing = True
         self._continue_conversation = msg.start_conversation
         self._play(urls)
+
+    def _play_cue(self, cue: str) -> None:
+        """Play a listening cue without waiting for it: the mic keeps
+        streaming meanwhile, and a reply queues up behind it."""
+        path = self._cues.get(cue)
+
+        if path is not None and self.speaker is not None and self.loop is not None:
+            self.loop.create_task(self._play_cue_file(path))
+
+    async def _play_cue_file(self, path: str) -> None:
+        assert self.speaker is not None
+
+        try:
+            await self.speaker.play(path)
+        except Exception:
+            logger.warning(
+                "Voice satellite %s: failed to play cue", self.name, exc_info=True
+            )
 
     def _play_tts(self) -> None:
         if not self._tts_url or self._tts_played:
@@ -934,6 +1021,7 @@ class VoiceSatellite:
             self._finish_run()
 
     def _finish_run(self) -> None:
+        self._done_cue_pending = False
         self.streaming_audio = False
         self.pipeline_active = False
         self._continue_conversation = False

@@ -266,7 +266,11 @@ How it works:
   camera only serves one RTSP connection for both.
 
 Without a `protect` block the satellite still listens and runs commands, it just
-doesn't speak the replies.
+doesn't speak the replies (or play the listening tones).
+
+A camera turns its mic down for about a second after it has played something (measured
+on a G6 Instant: roughly 10 dB), and the start-of-listening tone plays right as you
+start talking. If commands are recognised worse with it, turn `wake_sound` off.
 
 The connection is plaintext (no ESPHome API encryption), like Linux Voice Assistant's;
 keep the port on your LAN. Expose the port from the container (the add-on publishes
@@ -302,6 +306,13 @@ voice_satellites:
     # about 1.5 seconds in. Only worth trying with the speaker volume turned well down
     # (Default: shown below).
     stop_word: false
+    # OPTIONAL: Play a short, soft rising tone on the camera speaker when the satellite
+    # starts listening, after the wake word. The mic keeps listening while it plays, so
+    # you can talk straight away. Needs protect (Default: shown below).
+    wake_sound: true
+    # OPTIONAL: Play a short, soft falling tone when the satellite stops listening,
+    # before the reply. Needs protect (Default: shown below).
+    done_sound: true
     # OPTIONAL: Ignore further wake words for this many seconds after one triggers
     # (Default: shown below).
     refractory_seconds: 2.0

@@ -6,6 +6,7 @@ import multiprocessing
 import shutil
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -21,6 +22,7 @@ from swatch.voice import (
     VoiceSatelliteServer,
     find_wake_words,
     satellite_mac_address,
+    write_cue,
 )
 
 
@@ -199,6 +201,41 @@ class TestOnAudio(unittest.TestCase):
         assert ("stop_speaking", ()) in self.scheduled
 
 
+class TestCues(unittest.TestCase):
+    def test_cue_is_a_short_quiet_wav(self) -> None:
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = str(Path(tmp) / "cue.wav")
+        write_cue(path, (880.0, 1320.0))
+
+        with wave.open(path) as cue:
+            frames = cue.readframes(cue.getnframes())
+            seconds = cue.getnframes() / cue.getframerate()
+
+        samples = [
+            int.from_bytes(frames[i : i + 2], "little", signed=True)
+            for i in range(0, len(frames), 2)
+        ]
+        assert 0.1 < seconds < 0.5
+        assert max(abs(v) for v in samples) < 0.2 * 32767
+        assert abs(samples[0]) < 50  # faded in, no click
+
+    def test_cues_follow_config(self) -> None:
+        both = VoiceSatellite(make_config(), speaker=FakeSpeaker())
+        assert set(both._cues) == {"wake", "done"}
+
+        wake_only = VoiceSatellite(make_config(done_sound=False), speaker=FakeSpeaker())
+        assert set(wake_only._cues) == {"wake"}
+
+        none = VoiceSatellite(
+            make_config(wake_sound=False, done_sound=False), speaker=FakeSpeaker()
+        )
+        assert none._cues == {}
+
+    def test_no_cues_without_a_speaker(self) -> None:
+        assert VoiceSatellite(make_config())._cues == {}
+
+
 class TestMicHoldBack(unittest.TestCase):
     """Mic audio waits for Home Assistant to confirm the run, so the start
     of the command isn't lost when Home Assistant clears its audio queue."""
@@ -330,6 +367,26 @@ class TestProtectSpeaker(unittest.IsolatedAsyncioTestCase):
         assert played[0][1] == b"ID3fake-mp3"
         assert played[0][0].endswith(".mp3")
         assert not Path(played[0][0]).exists()  # cleaned up afterwards
+
+    async def test_plays_are_queued_not_overlapped(self) -> None:
+        """The camera can only play one stream at a time, so a reply that
+        arrives while a cue is still playing waits for it."""
+        speaker, _camera = self._speaker()
+        log: list[str] = []
+
+        async def play_file(path: str) -> None:
+            log.append(f"start {path}")
+            await asyncio.sleep(0.05)
+            log.append(f"end {path}")
+
+        speaker._play_file = play_file  # type: ignore[method-assign]
+        await asyncio.gather(speaker.play("/cue.wav"), speaker.play("/reply.wav"))
+        assert log == [
+            "start /cue.wav",
+            "end /cue.wav",
+            "start /reply.wav",
+            "end /reply.wav",
+        ]
 
     async def test_local_files_are_played_directly(self) -> None:
         speaker, _camera = self._speaker()
@@ -486,7 +543,9 @@ class TestHomeAssistantSession(unittest.IsolatedAsyncioTestCase):
         )
         self.client.send_voice_assistant_event(events.VOICE_ASSISTANT_RUN_END, {})
         await self._settle()
-        assert self.speaker.played == ["http://ha/reply.mp3"]
+        played = [Path(p).name for p in self.speaker.played]
+        # rising cue on wake, falling cue when speech ended, then the reply
+        assert played == ["wake.wav", "done.wav", "reply.mp3"]
         assert self.finished == 1
         assert not self.satellite.pipeline_active
 
@@ -498,7 +557,7 @@ class TestHomeAssistantSession(unittest.IsolatedAsyncioTestCase):
         )
         await self._settle()
         assert not self.satellite.pipeline_active
-        assert self.speaker.played == []
+        assert [Path(p).name for p in self.speaker.played] == ["wake.wav"]
 
     async def test_continue_conversation_starts_a_new_run(self) -> None:
         events = VoiceAssistantEventType

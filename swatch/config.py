@@ -340,6 +340,21 @@ class VoiceSatelliteConfig(SwatchBaseModel):
         ),
         default=False,
     )
+    wake_sound: bool = Field(
+        title=(
+            "Play a short, soft rising tone on the camera speaker when the "
+            "satellite starts listening (after the wake word). The mic keeps "
+            "listening while it plays. Needs protect."
+        ),
+        default=True,
+    )
+    done_sound: bool = Field(
+        title=(
+            "Play a short, soft falling tone when the satellite stops "
+            "listening, before the reply. Needs protect."
+        ),
+        default=True,
+    )
     refractory_seconds: float = Field(
         title="Ignore further wake words for this long after one triggers.",
         default=2.0,
