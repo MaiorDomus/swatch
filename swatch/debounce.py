@@ -49,6 +49,14 @@ class SustainedStateTracker:
 
         return self.is_on
 
+    def force(self, is_on: bool) -> bool:
+        """Set the state directly, for callers with their own stronger
+        evidence (e.g. an audio monitor hearing the hum stop outright),
+        dropping any progress toward the opposite state."""
+        self.is_on = is_on
+        self._pending_windows = 0
+        return self.is_on
+
 
 class TimeBasedSustainedStateTracker:
     """Debounces booleans into an on/off state based on real elapsed time,

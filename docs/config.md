@@ -233,6 +233,11 @@ audio_monitors:
     # OPTIONAL: How long quiet or unsteady audio must be sustained before switching
     # off, in seconds (Default: shown below).
     min_off_seconds: 10.0
+    # OPTIONAL: Switch off sooner, after this many seconds of audio too quiet to be the
+    # hum (below threshold_db or min_band_level_db). Loud but unsteady audio (people
+    # talking over the fan) still needs min_off_seconds, so that can be long without
+    # delaying the off when the fan really stops (Default: unset, min_off_seconds only).
+    # quiet_off_seconds: 5.0
     # OPTIONAL: Number of days of on/off history to keep, shown on the dashboard's
     # activity table and via /api/detections (Default: shown below).
     retain_days: 1

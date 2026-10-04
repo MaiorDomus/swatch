@@ -408,6 +408,12 @@ class AudioMonitor:
         self._classifier = SoundStateClassifier(
             config.window_seconds, config.min_on_seconds, config.min_off_seconds
         )
+        self._min_quiet_windows = (
+            max(1, round(config.quiet_off_seconds / config.window_seconds))
+            if config.quiet_off_seconds is not None
+            else None
+        )
+        self._quiet_windows = 0
         self._window_bytes = int(config.sample_rate * config.window_seconds) * 2
         self._pending = bytearray()
         self._prev_spectrum: np.ndarray | None = None
@@ -458,6 +464,7 @@ class AudioMonitor:
             self.config.min_on_seconds,
             self.config.min_off_seconds,
         )
+        self._quiet_windows = 0
 
     def on_audio(self, raw: bytes) -> None:
         """Buffer the source's chunks into window_seconds-long windows and
@@ -544,6 +551,19 @@ class AudioMonitor:
             and flux <= self.config.max_spectral_flux
         )
         self.is_on = self._classifier.update(is_candidate)
+
+        # Too quiet to be the hum at all (as opposed to loud but unsteady,
+        # e.g. talking over the fan): the fan has most likely stopped, so
+        # quiet_off_seconds can switch off before min_off_seconds would.
+        is_quiet = loudness_db < self.config.threshold_db or not has_band_level
+        self._quiet_windows = self._quiet_windows + 1 if is_quiet else 0
+        if (
+            self.is_on
+            and self._min_quiet_windows is not None
+            and self._quiet_windows >= self._min_quiet_windows
+        ):
+            self.is_on = self._classifier.force(False)
+
         self.__record_transition__()
 
     def _process_stream(self) -> None:

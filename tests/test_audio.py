@@ -290,6 +290,21 @@ class TestSoundStateClassifier(unittest.TestCase):
         assert classifier.min_on_windows >= 1
         assert classifier.update(True) is True
 
+    def test_force_sets_state_and_drops_pending_progress(self) -> None:
+        classifier = SoundStateClassifier(
+            window_seconds=1.0, min_on_seconds=1.0, min_off_seconds=3.0
+        )
+        classifier.update(True)
+        classifier.update(False)
+        classifier.update(False)
+
+        assert classifier.force(False) is False
+        # the two off windows already seen don't count toward the next flip
+        assert classifier.update(True) is True
+        assert classifier.update(False) is True
+        assert classifier.update(False) is True
+        assert classifier.update(False) is False
+
 
 class TestAudioMonitorDetectionHistory(unittest.TestCase):
     """Testing that on/off transitions get recorded in the Detection table,
@@ -390,6 +405,10 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
         cls.low_fan_wav = cls._generate_low_fan()
         cls.low_fan_with_loud_podcast_wav = cls._generate_low_fan_with_loud_podcast()
         cls.hiss_over_faint_hum_wav = cls._generate_hiss_over_faint_hum()
+        cls.fan_then_silence_wav = cls._generate_fan_then("anullsrc=r=16000:d=4")
+        cls.fan_then_speech_wav = cls._generate_fan_then(
+            "aevalsrc='0.5*sin(2*PI*(200+1800*(t/4))*t)':d=4:s=16000"
+        )
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -568,6 +587,23 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
         )
 
     @classmethod
+    def _generate_fan_then(cls, after: str) -> str:
+        """6s of the fan noise above, then 4s of another lavfi source."""
+        name = "fan_then_" + after.split("=")[0] + ".wav"
+        return cls._ffmpeg_mix(
+            name,
+            [
+                "anoisesrc=color=pink:amplitude=0.3:duration=6",
+                "sine=frequency=120:duration=6",
+                after,
+            ],
+            "[0][1]amix=inputs=2:duration=shortest,aresample=16000,"
+            "aformat=channel_layouts=mono[f];"
+            "[2]aresample=16000,aformat=channel_layouts=mono[a];"
+            "[f][a]concat=n=2:v=0:a=1",
+        )
+
+    @classmethod
     def _generate_silence(cls) -> str:
         path = str(Path(cls.tmp_dir) / "silence.wav")
         subprocess.run(
@@ -594,12 +630,14 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
         **overrides: float | None,
     ) -> bool:
         config = AudioMonitorConfig(
-            name="test",
-            rtsp_url="unused",
-            min_on_seconds=2,
-            min_off_seconds=2,
-            flux_band_cutoff_hz=flux_band_cutoff_hz,
-            **overrides,
+            **{
+                "name": "test",
+                "rtsp_url": "unused",
+                "min_on_seconds": 2,
+                "min_off_seconds": 2,
+                "flux_band_cutoff_hz": flux_band_cutoff_hz,
+                **overrides,
+            }
         )
         monitor = AudioMonitor(config, multiprocessing.Event(), input_source=wav_path)
         monitor._process_stream()
@@ -631,6 +669,36 @@ class TestAudioMonitorEndToEnd(unittest.TestCase):
 
     def test_silence_stays_off(self) -> None:
         assert self._run_to_completion(self.silence_wav) is False
+
+    def test_quiet_off_seconds_switches_off_when_the_hum_stops(self) -> None:
+        """4s of silence after the fan is well short of a long
+        min_off_seconds, but long enough for quiet_off_seconds."""
+        assert (
+            self._run_to_completion(self.fan_then_silence_wav, min_off_seconds=30)
+            is True
+        )
+        assert (
+            self._run_to_completion(
+                self.fan_then_silence_wav, min_off_seconds=30, quiet_off_seconds=2
+            )
+            is False
+        )
+
+    def test_quiet_off_seconds_ignores_loud_unsteady_audio(self) -> None:
+        """Speech-like audio after the fan fails the flux check but isn't
+        quiet, so it still has to wait out min_off_seconds."""
+        assert (
+            self._run_to_completion(
+                self.fan_then_speech_wav, min_off_seconds=30, quiet_off_seconds=2
+            )
+            is True
+        )
+        assert (
+            self._run_to_completion(
+                self.fan_then_speech_wav, min_off_seconds=2, quiet_off_seconds=2
+            )
+            is False
+        )
 
     def test_loud_podcast_hides_fan_from_band_energy_ratio(self) -> None:
         """Regression baseline for min_band_level_db: with only the ratio

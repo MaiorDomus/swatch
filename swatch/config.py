@@ -249,6 +249,19 @@ class AudioMonitorConfig(SwatchBaseModel):
         title="How long quiet or unsteady audio must be sustained before switching off.",
         default=10.0,
     )
+    quiet_off_seconds: float | None = Field(
+        title=(
+            "Switch off sooner, after this long of audio too quiet to be the hum "
+            "(below threshold_db or min_band_level_db). Audio that is still loud "
+            "but unsteady still needs min_off_seconds. People talking over a "
+            "running fan push the flux up in about half the windows while its hum "
+            "stays just as loud, so min_off_seconds has to be long to ride that "
+            "out, but the hum itself stops within a second or two of the fan. "
+            "Should be shorter than min_off_seconds. Unset (None) to only use "
+            "min_off_seconds."
+        ),
+        default=None,
+    )
     retain_days: int = Field(
         title="Number of days of on/off history to keep (default: shown below).",
         default=1,
