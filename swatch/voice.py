@@ -293,6 +293,12 @@ class ProtectSpeaker:
         self._camera: Any = None
         # The camera plays one thing at a time: cues and replies queue up.
         self._play_lock = asyncio.Lock()
+        # Status light changes apply in order; None until first used, then
+        # what the light is set to now.
+        self._light_lock = asyncio.Lock()
+        self._light_on: bool | None = None
+        # The light's own setting, restored when listening ends.
+        self._light_default: bool | None = None
 
     async def _get_camera(self) -> Any:
         if self._camera is not None:
@@ -398,6 +404,25 @@ class ProtectSpeaker:
             # A stale session or a camera that went away: start over next time.
             self._camera = None
             raise
+
+    async def set_listening_light(self, listening: bool) -> None:
+        """Turn the camera's status light on while listening, and back to
+        its own setting afterwards."""
+        async with self._light_lock:
+            camera = await self._get_camera()
+
+            if self._light_default is None:
+                if not camera.feature_flags.has_led_status:
+                    raise ValueError(f"Camera {camera.name} has no status light")
+
+                self._light_default = bool(camera.led_settings.is_enabled)
+                self._light_on = self._light_default
+
+            wanted = True if listening else self._light_default
+
+            if wanted != self._light_on:
+                await camera.set_status_light(wanted)
+                self._light_on = wanted
 
     async def stop(self) -> None:
         camera = self._camera
@@ -668,6 +693,10 @@ class VoiceSatellite:
             self._connection.close()
 
         if self.speaker is not None:
+            if self.config.listening_light:
+                # Don't leave the light on if swatch stops mid-run.
+                await self._apply_light(False)
+
             try:
                 await self.speaker.close()
             except Exception:
@@ -924,6 +953,7 @@ class VoiceSatellite:
         self.streaming_audio = True
         self._done_cue_pending = True
         self._play_cue("wake")
+        self._set_light(True)
 
     def _mic_chunk(self, raw: bytes) -> None:
         """Send mic audio for the current run -- or, until Home Assistant has
@@ -957,6 +987,8 @@ class VoiceSatellite:
             self.streaming_audio = False
             self._send([VoiceAssistantRequest(start=False)])
 
+        self._set_light(False)
+
     def handle_voice_event(
         self, event_type: VoiceAssistantEventType, data: dict[str, str]
     ) -> None:
@@ -973,6 +1005,7 @@ class VoiceSatellite:
             VoiceAssistantEventType.VOICE_ASSISTANT_STT_END,
         ):
             self.streaming_audio = False
+            self._set_light(False)
 
             if self._done_cue_pending:
                 self._done_cue_pending = False
@@ -1022,6 +1055,28 @@ class VoiceSatellite:
 
         if path is not None and self.speaker is not None and self.loop is not None:
             self.loop.create_task(self._play_cue_file(path))
+
+    def _set_light(self, listening: bool) -> None:
+        """Show on the camera's status light whether the satellite is
+        listening, without waiting for it (the speaker skips no-op changes)."""
+        if (
+            self.config.listening_light
+            and self.speaker is not None
+            and self.loop is not None
+        ):
+            self.loop.create_task(self._apply_light(listening))
+
+    async def _apply_light(self, listening: bool) -> None:
+        assert self.speaker is not None
+
+        try:
+            await self.speaker.set_listening_light(listening)
+        except Exception:
+            logger.warning(
+                "Voice satellite %s: failed to set the status light",
+                self.name,
+                exc_info=True,
+            )
 
     async def _play_cue_file(self, path: str) -> None:
         assert self.speaker is not None
@@ -1105,6 +1160,7 @@ class VoiceSatellite:
             self._finish_run()
 
     def _finish_run(self) -> None:
+        self._set_light(False)
         self._done_cue_pending = False
         self.streaming_audio = False
         self.pipeline_active = False

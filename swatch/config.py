@@ -389,6 +389,15 @@ class VoiceSatelliteConfig(SwatchBaseModel):
         ),
         default=True,
     )
+    listening_light: bool = Field(
+        title=(
+            "Turn the camera's status light on while the satellite listens "
+            "(from the wake word until the end of the command). Unlike "
+            "wake_sound it doesn't make the camera deaf for a moment. Best "
+            "with the status light normally off. Needs protect."
+        ),
+        default=False,
+    )
     refractory_seconds: float = Field(
         title="Ignore further wake words for this long after one triggers.",
         default=2.0,

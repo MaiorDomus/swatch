@@ -55,6 +55,7 @@ class FakeSpeaker:
         self.played: list[str] = []
         self.stopped = False
         self.connected = False
+        self.lights: list[bool] = []
 
     async def connect(self) -> None:
         self.connected = True
@@ -64,6 +65,9 @@ class FakeSpeaker:
 
     async def stop(self) -> None:
         self.stopped = True
+
+    async def set_listening_light(self, listening: bool) -> None:
+        self.lights.append(listening)
 
     async def close(self) -> None:
         pass
@@ -383,9 +387,15 @@ class FakeCamera:
     def __init__(self) -> None:
         self.talkback_stream = FakeTalkbackStream()
         self.stopped = False
+        self.feature_flags = mock.Mock(has_led_status=True)
+        self.led_settings = mock.Mock(is_enabled=False)
+        self.status_light_calls: list[bool] = []
 
     async def play_audio(self, url: str, **_kwargs: Any) -> None:
         await asyncio.sleep(3600)
+
+    async def set_status_light(self, enabled: bool) -> None:
+        self.status_light_calls.append(enabled)
 
     async def stop_audio(self) -> None:
         self.stopped = True
@@ -404,6 +414,27 @@ class TestProtectSpeaker(unittest.IsolatedAsyncioTestCase):
 
         speaker._get_camera = get_camera  # type: ignore[method-assign]
         return speaker, camera
+
+    async def test_listening_light_restores_the_lights_own_setting(self) -> None:
+        speaker, camera = self._speaker()
+        await speaker.set_listening_light(False)  # already off: no call
+        await speaker.set_listening_light(True)
+        await speaker.set_listening_light(True)
+        await speaker.set_listening_light(False)
+        assert camera.status_light_calls == [True, False]
+
+    async def test_listening_light_with_the_light_normally_on(self) -> None:
+        speaker, camera = self._speaker()
+        camera.led_settings.is_enabled = True
+        await speaker.set_listening_light(True)
+        await speaker.set_listening_light(False)
+        assert camera.status_light_calls == []
+
+    async def test_listening_light_needs_a_status_light(self) -> None:
+        speaker, camera = self._speaker()
+        camera.feature_flags.has_led_status = False
+        with self.assertRaises(ValueError):
+            await speaker.set_listening_light(True)
 
     async def test_hung_playback_is_stopped(self) -> None:
         speaker, camera = self._speaker()
@@ -636,6 +667,28 @@ class TestHomeAssistantSession(unittest.IsolatedAsyncioTestCase):
         assert played == ["wake.wav", "done.wav", "reply.mp3"]
         assert self.finished == 1
         assert not self.satellite.pipeline_active
+
+    async def test_listening_light_follows_the_run(self) -> None:
+        self.satellite.config.listening_light = True
+        events = VoiceAssistantEventType
+        self._on_loop(self.satellite.wakeup, "Okay Nabu")
+        await self._settle()
+        assert self.speaker.lights == [True]
+
+        self.client.send_voice_assistant_event(events.VOICE_ASSISTANT_RUN_START, {})
+        self.client.send_voice_assistant_event(events.VOICE_ASSISTANT_STT_VAD_END, {})
+        await self._settle()
+        # Off as soon as the command has been heard, not after the reply.
+        assert self.speaker.lights[-1] is False
+
+        self.client.send_voice_assistant_event(events.VOICE_ASSISTANT_RUN_END, {})
+        await self._settle()
+        assert self.speaker.lights[-1] is False
+
+    async def test_listening_light_is_off_by_default(self) -> None:
+        self._on_loop(self.satellite.wakeup, "Okay Nabu")
+        await self._settle()
+        assert self.speaker.lights == []
 
     async def test_run_without_reply_ends_on_run_end(self) -> None:
         self._on_loop(self.satellite.wakeup, "Okay Nabu")

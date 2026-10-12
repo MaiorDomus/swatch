@@ -276,9 +276,12 @@ How it works:
 Without a `protect` block the satellite still listens and runs commands, it just
 doesn't speak the replies (or play the listening tones).
 
-A camera turns its mic down for about a second after it has played something (measured
-on a G6 Instant: roughly 10 dB), and the start-of-listening tone plays right as you
-start talking. If commands are recognised worse with it, turn `wake_sound` off.
+A camera's mic hears nothing while its speaker plays, and stays silent a little longer
+after (measured on a G6 Instant: the mic is cut off completely during the tone and for
+0.15-0.45 s after it). The start-of-listening tone plays right as you start talking, so
+the first word of a command that follows the wake word straight away gets lost. If
+that happens, turn `wake_sound` off and use `listening_light` to see that the
+satellite is listening instead.
 
 The connection is plaintext (no ESPHome API encryption), like Linux Voice Assistant's;
 keep the port on your LAN. Expose the port from the container (the add-on publishes
@@ -336,6 +339,12 @@ voice_satellites:
     # OPTIONAL: Play a short, soft falling tone when the satellite stops listening,
     # before the reply. Needs protect (Default: shown below).
     done_sound: true
+    # OPTIONAL: Turn the camera's status light on while the satellite listens, from the
+    # wake word until the end of the command, so you can see it heard you. Unlike
+    # wake_sound it doesn't make the camera deaf for a moment. Best with the status
+    # light normally off (it goes back to its own setting afterwards). Needs protect
+    # (Default: shown below).
+    listening_light: false
     # OPTIONAL: Ignore further wake words for this many seconds after one triggers
     # (Default: shown below).
     refractory_seconds: 2.0
