@@ -94,6 +94,8 @@ RUN_TIMEOUT_SECONDS = 60.0
 # can't leave the satellite busy (Home Assistant refuses new announcements
 # until the previous one reports finished).
 PLAY_TIMEOUT_SECONDS = 180.0
+# Each blink of listening_light_blinks: this long off, then this long on.
+LIGHT_BLINK_SECONDS = 0.3
 DOWNLOAD_TIMEOUT_SECONDS = 30.0
 # Most mic audio held back while Home Assistant hasn't confirmed a run yet
 # (10 s at 16 kHz, 16-bit mono); anything older is dropped.
@@ -405,9 +407,9 @@ class ProtectSpeaker:
             self._camera = None
             raise
 
-    async def set_listening_light(self, listening: bool) -> None:
+    async def set_listening_light(self, listening: bool, blinks: int = 0) -> None:
         """Turn the camera's status light on while listening, and back to
-        its own setting afterwards."""
+        its own setting afterwards -- blinking it first, if it was on."""
         async with self._light_lock:
             camera = await self._get_camera()
 
@@ -419,6 +421,13 @@ class ProtectSpeaker:
                 self._light_on = self._light_default
 
             wanted = True if listening else self._light_default
+
+            if not listening and self._light_on:
+                for _ in range(blinks):
+                    await camera.set_status_light(False)
+                    await asyncio.sleep(LIGHT_BLINK_SECONDS)
+                    await camera.set_status_light(True)
+                    await asyncio.sleep(LIGHT_BLINK_SECONDS)
 
             if wanted != self._light_on:
                 await camera.set_status_light(wanted)
@@ -695,7 +704,7 @@ class VoiceSatellite:
         if self.speaker is not None:
             if self.config.listening_light:
                 # Don't leave the light on if swatch stops mid-run.
-                await self._apply_light(False)
+                await self._apply_light(False, blinks=0)
 
             try:
                 await self.speaker.close()
@@ -1070,11 +1079,14 @@ class VoiceSatellite:
         ):
             self.loop.create_task(self._apply_light(listening))
 
-    async def _apply_light(self, listening: bool) -> None:
+    async def _apply_light(self, listening: bool, blinks: int | None = None) -> None:
         assert self.speaker is not None
 
+        if blinks is None:
+            blinks = 0 if listening else self.config.listening_light_blinks
+
         try:
-            await self.speaker.set_listening_light(listening)
+            await self.speaker.set_listening_light(listening, blinks)
         except Exception:
             logger.warning(
                 "Voice satellite %s: failed to set the status light",

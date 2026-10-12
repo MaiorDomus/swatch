@@ -398,6 +398,16 @@ class VoiceSatelliteConfig(SwatchBaseModel):
         ),
         default=False,
     )
+    listening_light_blinks: int = Field(
+        title=(
+            "With listening_light: blink the status light this many times "
+            "when the satellite stops listening, before it goes off. A "
+            "silent alternative to done_sound."
+        ),
+        default=0,
+        ge=0,
+        le=5,
+    )
     refractory_seconds: float = Field(
         title="Ignore further wake words for this long after one triggers.",
         default=2.0,

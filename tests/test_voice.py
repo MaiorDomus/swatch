@@ -56,6 +56,7 @@ class FakeSpeaker:
         self.stopped = False
         self.connected = False
         self.lights: list[bool] = []
+        self.blinks: list[int] = []
 
     async def connect(self) -> None:
         self.connected = True
@@ -66,8 +67,9 @@ class FakeSpeaker:
     async def stop(self) -> None:
         self.stopped = True
 
-    async def set_listening_light(self, listening: bool) -> None:
+    async def set_listening_light(self, listening: bool, blinks: int = 0) -> None:
         self.lights.append(listening)
+        self.blinks.append(blinks)
 
     async def close(self) -> None:
         pass
@@ -424,6 +426,15 @@ class TestProtectSpeaker(unittest.IsolatedAsyncioTestCase):
         await speaker.set_listening_light(False)
         assert camera.status_light_calls == [True, False]
 
+    async def test_listening_light_blinks_before_going_off(self) -> None:
+        speaker, camera = self._speaker()
+        with mock.patch("swatch.voice.LIGHT_BLINK_SECONDS", 0):
+            await speaker.set_listening_light(True)
+            await speaker.set_listening_light(False, blinks=2)
+            # Already off: nothing to blink.
+            await speaker.set_listening_light(False, blinks=2)
+        assert camera.status_light_calls == [True, False, True, False, True, False]
+
     async def test_listening_light_with_the_light_normally_on(self) -> None:
         speaker, camera = self._speaker()
         camera.led_settings.is_enabled = True
@@ -685,6 +696,18 @@ class TestHomeAssistantSession(unittest.IsolatedAsyncioTestCase):
         self.client.send_voice_assistant_event(events.VOICE_ASSISTANT_RUN_END, {})
         await self._settle()
         assert self.speaker.lights[-1] is False
+
+    async def test_listening_light_blinks_when_listening_stops(self) -> None:
+        self.satellite.config.listening_light = True
+        self.satellite.config.listening_light_blinks = 2
+        self._on_loop(self.satellite.wakeup, "Okay Nabu")
+        await self._settle()
+        self.client.send_voice_assistant_event(
+            VoiceAssistantEventType.VOICE_ASSISTANT_STT_VAD_END, {}
+        )
+        await self._settle()
+        assert self.speaker.lights[:2] == [True, False]
+        assert self.speaker.blinks[:2] == [0, 2]
 
     async def test_listening_light_is_off_by_default(self) -> None:
         self._on_loop(self.satellite.wakeup, "Okay Nabu")

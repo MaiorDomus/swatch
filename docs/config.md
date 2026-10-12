@@ -345,6 +345,10 @@ voice_satellites:
     # light normally off (it goes back to its own setting afterwards). Needs protect
     # (Default: shown below).
     listening_light: false
+    # OPTIONAL: With listening_light, blink the status light this many times (0-5) when
+    # the satellite stops listening, before it goes off: a silent alternative to
+    # done_sound (Default: shown below).
+    listening_light_blinks: 0
     # OPTIONAL: Ignore further wake words for this many seconds after one triggers
     # (Default: shown below).
     refractory_seconds: 2.0
