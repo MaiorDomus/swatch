@@ -261,6 +261,9 @@ How it works:
   [microWakeWord](https://github.com/kahrendt/microWakeWord) models. Built in:
   `okay_nabu` (also trained on Dutch, French, German, Italian, Spanish and Swedish
   speakers), `hey_jarvis`, `hey_mycroft`, `alexa`. Up to two can be active at once.
+  Custom models from `wake_word_dir` can be microWakeWord or
+  [openWakeWord](https://github.com/dscripka/openWakeWord) ones, for example a wake
+  word trained on your own voice.
 - After the wake word, swatch streams the audio to Home Assistant, which runs the
   pipeline. Your commands can be in any language your pipeline supports -- the wake
   word only starts the listening.
@@ -307,10 +310,18 @@ voice_satellites:
     # TV and speech never went above 0.07 (Default: each model's own, 0.85 for
     # okay_nabu).
     # wake_word_threshold: 0.7
-    # OPTIONAL: Directory of extra microWakeWord models, each a <id>.json config next to
-    # its .tflite file (the format ESPHome and Linux Voice Assistant use), e.g. a
-    # custom-trained wake word. They're offered to Home Assistant alongside the built-in
-    # ones (Default: none).
+    # OPTIONAL: Directory of extra wake word models, e.g. a custom-trained wake word.
+    # They're offered to Home Assistant alongside the built-in ones (Default: none).
+    # It can hold:
+    # - microWakeWord models: a <id>.json config next to its .tflite file (the format
+    #   ESPHome and Linux Voice Assistant use).
+    # - openWakeWord models: an <id>.onnx file. On its own it's named after the file
+    #   (ok_nabu_nl.onnx -> "Ok Nabu Nl") and triggers at 0.5. Add an <id>.json next
+    #   to it to name it and set its threshold:
+    #     {"type": "openWakeWord", "model": "ok_nabu_nl.onnx", "wake_word": "Ok Nabu",
+    #      "trained_languages": ["nl"], "probability_cutoff": 0.5}
+    #   wake_word_threshold, if set, still overrides the threshold. Only .onnx
+    #   openWakeWord models work, not .tflite ones.
     # wake_word_dir: /config/wake_words
     # OPTIONAL: Listen for "stop" while a reply is playing, to cut it off. Off by
     # default: a camera has no echo cancellation, so its mic hears the reply itself and

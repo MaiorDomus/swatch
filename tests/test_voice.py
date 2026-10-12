@@ -25,6 +25,9 @@ from swatch.voice import (
     write_cue,
 )
 
+# A stand-in openWakeWord classifier (no trained weights, just the shapes).
+OWW_TEST_MODEL = Path(__file__).parent / "fixtures" / "oww_test_model.onnx"
+
 
 def make_config(**overrides: Any) -> VoiceSatelliteConfig:
     return VoiceSatelliteConfig.model_validate(
@@ -113,16 +116,89 @@ class TestFindWakeWords(unittest.TestCase):
         assert found["he_huis"].wake_word == "Hé Huis"
         assert "okay_nabu" in found
 
-    def test_non_micro_models_are_skipped(self) -> None:
+    def test_tflite_openwakeword_models_are_skipped(self) -> None:
         self._write(
             "oww", {"type": "openWakeWord", "wake_word": "x", "model": "oww.tflite"}
         )
         assert "oww" not in find_wake_words(self.tmp_dir)
 
+    def test_extra_dir_adds_openwakeword_models(self) -> None:
+        shutil.copy(OWW_TEST_MODEL, Path(self.tmp_dir) / "ok_nabu_nl.onnx")
+        shutil.copy(OWW_TEST_MODEL, Path(self.tmp_dir) / "hey_huis.onnx")
+        self._write(
+            "hey_huis",
+            {
+                "type": "openWakeWord",
+                "wake_word": "Hé Huis",
+                "model": "hey_huis.onnx",
+                "trained_languages": ["nl"],
+                "probability_cutoff": 0.6,
+            },
+        )
+        found = find_wake_words(self.tmp_dir)
+
+        # A bare .onnx is named after its file.
+        assert found["ok_nabu_nl"].kind == "openwakeword"
+        assert found["ok_nabu_nl"].wake_word == "Ok Nabu Nl"
+        assert found["ok_nabu_nl"].probability_cutoff == 0.5
+        # A .json names it and sets its cutoff.
+        assert found["hey_huis"].wake_word == "Hé Huis"
+        assert found["hey_huis"].trained_languages == ["nl"]
+        assert found["hey_huis"].probability_cutoff == 0.6
+        assert "okay_nabu" in found
+
+        model = found["hey_huis"].load()
+        assert model.id == "hey_huis"
+        assert model.probability_cutoff == 0.6
+
     def test_broken_configs_are_skipped(self) -> None:
         with open(Path(self.tmp_dir) / "broken.json", "w") as f:
             f.write("{not json")
         assert "okay_nabu" in find_wake_words(self.tmp_dir)
+
+
+class TestOpenWakeWordSatellite(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp_dir = tempfile.mkdtemp()
+        shutil.copy(OWW_TEST_MODEL, Path(self.tmp_dir) / "ok_nabu_nl.onnx")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_runs_next_to_micro_wake_words(self) -> None:
+        satellite = VoiceSatellite(
+            make_config(
+                wake_word_dir=self.tmp_dir, wake_words=["okay_nabu", "ok_nabu_nl"]
+            )
+        )
+        assert [ww.id for ww in satellite.active_wake_words] == [
+            "okay_nabu",
+            "ok_nabu_nl",
+        ]
+        oww = satellite.active_wake_words[1]
+        # The test model's sigmoid(mean) never reaches 1, so it can't trigger.
+        oww.probability_cutoff = 1.0
+        wakes: list[str] = []
+        satellite._call_soon = lambda callback, *args: wakes.append(args)  # type: ignore[method-assign]
+
+        # 3 s of near-silence in uneven chunks, like ffmpeg delivers.
+        silence = bytes(16000 * 2 * 3)
+        for start in range(0, len(silence), 2000):
+            satellite.on_audio(silence[start : start + 2000])
+
+        # 80 ms steps: 37 complete after 3 s minus the first step's context.
+        assert oww._steps == 37
+        assert 0 < oww.last_probability < 1
+        assert wakes == []
+
+        satellite.on_stream_end()
+        assert oww._steps == 0
+
+    def test_openwakeword_features_only_when_needed(self) -> None:
+        satellite = VoiceSatellite(make_config(wake_word_dir=self.tmp_dir))
+        assert satellite._oww_features is None
+        satellite.set_active_wake_words(["ok_nabu_nl"])
+        assert satellite._oww_features is not None
 
 
 class TestActiveWakeWords(unittest.TestCase):

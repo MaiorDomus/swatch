@@ -74,6 +74,7 @@ import pymicro_wakeword
 from pymicro_wakeword import MicroWakeWord, MicroWakeWordFeatures, Model
 
 from swatch.config import ProtectConfig, VoiceSatelliteConfig
+from swatch.openwakeword import OpenWakeWord, OpenWakeWordFeatures
 
 logger = logging.getLogger(__name__)
 
@@ -168,29 +169,57 @@ def satellite_mac_address(name: str) -> str:
 # Wake words
 
 
+WakeWordModel = MicroWakeWord | OpenWakeWord
+
+# openWakeWord's own default; its models aren't calibrated like
+# microWakeWord's, which each carry a probability_cutoff.
+OPENWAKEWORD_DEFAULT_CUTOFF = 0.5
+
+
 @dataclass
 class AvailableWakeWord:
-    """A microWakeWord model that can be activated."""
+    """A microWakeWord or openWakeWord model that can be activated."""
 
     id: str
     wake_word: str
     trained_languages: list[str]
     config_path: Path
+    # "micro" (config_path is its .json) or "openwakeword" (config_path is
+    # its .onnx; the .json, if any, has been read into the fields here).
+    kind: str = "micro"
+    probability_cutoff: float = OPENWAKEWORD_DEFAULT_CUTOFF
 
-    def load(self) -> MicroWakeWord:
+    def load(self) -> WakeWordModel:
+        if self.kind == "openwakeword":
+            return OpenWakeWord(
+                id=self.id,
+                wake_word=self.wake_word,
+                model_path=self.config_path,
+                probability_cutoff=self.probability_cutoff,
+                trained_languages=self.trained_languages,
+            )
+
         model = MicroWakeWord.from_config(self.config_path)
         # from_config derives the id from the .tflite name; keep ours.
         model.id = self.id
         return model
 
 
+def _wake_word_name(ww_id: str) -> str:
+    """A readable name for a model without a config: ok_nabu -> Ok Nabu."""
+    return " ".join(part.capitalize() for part in ww_id.split("_") if part)
+
+
 def find_wake_words(extra_dir: str | None = None) -> dict[str, AvailableWakeWord]:
     """All wake words this satellite can offer Home Assistant: the models
-    bundled with pymicro-wakeword, plus any microWakeWord configs in
-    extra_dir (which can override a builtin with the same id)."""
+    bundled with pymicro-wakeword, plus any in extra_dir (which can override
+    a builtin with the same id). extra_dir can hold microWakeWord configs
+    (<id>.json next to its .tflite) and openWakeWord models: an <id>.onnx,
+    optionally with an <id>.json of type "openWakeWord" to name it."""
     found: dict[str, AvailableWakeWord] = {}
     builtin_dir = Path(pymicro_wakeword.__file__).parent / "models"
     config_paths = [builtin_dir / f"{model.value}.json" for model in Model]
+    described_models: set[Path] = set()
 
     if extra_dir:
         config_paths += sorted(Path(extra_dir).glob("*.json"))
@@ -200,14 +229,32 @@ def find_wake_words(extra_dir: str | None = None) -> dict[str, AvailableWakeWord
             with open(config_path, encoding="utf-8") as config_file:
                 config = json.load(config_file)
 
-            if config.get("type") != "micro":
+            ww_type = str(config.get("type", "")).lower()
+            model_path = config_path.parent / config["model"]
+            ww_id = model_path.stem
+
+            if ww_type == "openwakeword" and model_path.suffix == ".onnx":
+                described_models.add(model_path)
+                found[ww_id] = AvailableWakeWord(
+                    id=ww_id,
+                    wake_word=config.get("wake_word") or _wake_word_name(ww_id),
+                    trained_languages=config.get("trained_languages", []),
+                    config_path=model_path,
+                    kind="openwakeword",
+                    probability_cutoff=float(
+                        config.get("probability_cutoff", OPENWAKEWORD_DEFAULT_CUTOFF)
+                    ),
+                )
+                continue
+
+            if ww_type != "micro":
                 logger.warning(
-                    "Skipping wake word %s: only microWakeWord models are supported",
+                    "Skipping wake word %s: only microWakeWord models and "
+                    "openWakeWord .onnx models are supported",
                     config_path,
                 )
                 continue
 
-            ww_id = Path(config["model"]).stem
             found[ww_id] = AvailableWakeWord(
                 id=ww_id,
                 wake_word=config["wake_word"],
@@ -216,6 +263,19 @@ def find_wake_words(extra_dir: str | None = None) -> dict[str, AvailableWakeWord
             )
         except (OSError, ValueError, KeyError):
             logger.exception("Could not read wake word config %s", config_path)
+
+    if extra_dir:
+        for model_path in sorted(Path(extra_dir).glob("*.onnx")):
+            if model_path in described_models:
+                continue
+
+            found[model_path.stem] = AvailableWakeWord(
+                id=model_path.stem,
+                wake_word=_wake_word_name(model_path.stem),
+                trained_languages=[],
+                config_path=model_path,
+                kind="openwakeword",
+            )
 
     return found
 
@@ -539,8 +599,11 @@ class VoiceSatellite:
         self.available_wake_words = find_wake_words(config.wake_word_dir)
         self._ww_lock = threading.Lock()
         self._features = MicroWakeWordFeatures()
-        self._loaded_wake_words: dict[str, MicroWakeWord] = {}
-        self.active_wake_words: list[MicroWakeWord] = []
+        # Only created once an openWakeWord model is loaded: its two feature
+        # models cost a little CPU on every 80 ms of audio.
+        self._oww_features: OpenWakeWordFeatures | None = None
+        self._loaded_wake_words: dict[str, WakeWordModel] = {}
+        self.active_wake_words: list[WakeWordModel] = []
         self.set_active_wake_words(config.wake_words)
         self._stop_word: MicroWakeWord | None = (
             MicroWakeWord.from_config(BUILTIN_MODELS_DIR / "stop.json")
@@ -618,7 +681,7 @@ class VoiceSatellite:
     def set_active_wake_words(self, ids: Iterable[str]) -> None:
         """Activate up to MAX_ACTIVE_WAKE_WORDS of the available wake words,
         loading their models on first use; unknown ids are skipped."""
-        active: list[MicroWakeWord] = []
+        active: list[WakeWordModel] = []
 
         for ww_id in ids:
             if len(active) >= MAX_ACTIVE_WAKE_WORDS:
@@ -638,6 +701,12 @@ class VoiceSatellite:
                 if self.config.wake_word_threshold is not None:
                     model.probability_cutoff = self.config.wake_word_threshold
 
+                if isinstance(model, OpenWakeWord) and self._oww_features is None:
+                    oww_features = OpenWakeWordFeatures()
+
+                    with self._ww_lock:
+                        self._oww_features = oww_features
+
                 self._loaded_wake_words[ww_id] = model
 
             active.append(self._loaded_wake_words[ww_id])
@@ -651,20 +720,27 @@ class VoiceSatellite:
         if self.streaming_audio:
             self._call_soon(self._mic_chunk, raw)
 
-        features = list(self._features.process_streaming(raw))
-
-        if not features:
-            return
-
-        detected: MicroWakeWord | None = None
+        detected: WakeWordModel | None = None
         stopped = False
 
         with self._ww_lock:
+            features = list(self._features.process_streaming(raw))
+            oww_features = (
+                self._oww_features.process_streaming(raw)
+                if self._oww_features is not None
+                else []
+            )
+
+            if not features and not oww_features:
+                return
+
             # Run every model on every feature, even while a pipeline is
             # active, so each one's sliding window stays in step with the
             # audio -- otherwise it would resume on stale context.
             for wake_word in self.active_wake_words:
-                for feature in features:
+                for feature in (
+                    oww_features if isinstance(wake_word, OpenWakeWord) else features
+                ):
                     if wake_word.process_streaming(feature) and detected is None:
                         detected = wake_word
 
@@ -692,6 +768,9 @@ class VoiceSatellite:
     def on_stream_end(self) -> None:
         with self._ww_lock:
             self._features.reset()
+
+            if self._oww_features is not None:
+                self._oww_features.reset()
 
             for wake_word in self.active_wake_words:
                 wake_word.reset()

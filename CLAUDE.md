@@ -55,7 +55,10 @@ Key source files:
   (`VoiceSatelliteServer`); pipeline state is only changed on that loop, the audio
   thread just schedules onto it. `tests/test_voice.py` drives it end to end with
   aioesphomeapi's own client (what HA uses). `swatch/voice_models/` bundles the
-  "stop" model; the wake word models ship with `pymicro-wakeword`.
+  "stop" model and openWakeWord's two feature models; the built-in wake word models
+  ship with `pymicro-wakeword`. `swatch/openwakeword.py` runs openWakeWord `.onnx`
+  models from `wake_word_dir` on onnxruntime (a small reimplementation of
+  openwakeword's streaming pipeline, not the `openwakeword` package).
 - `swatch/snapshot.py` — saving/serving snapshot images (clean, masked, bounding-box
   annotated) to disk and via the API.
 - `swatch/http.py` — Flask routes (see `docs/api.md`).
