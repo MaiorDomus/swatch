@@ -767,11 +767,15 @@ class VoiceSatellite:
             # active, so each one's sliding window stays in step with the
             # audio -- otherwise it would resume on stale context.
             for wake_word in self.active_wake_words:
-                for feature in (
-                    oww_features if isinstance(wake_word, OpenWakeWord) else features
-                ):
-                    if wake_word.process_streaming(feature) and detected is None:
-                        detected = wake_word
+                if isinstance(wake_word, OpenWakeWord):
+                    heard: list[bool | None] = [
+                        wake_word.process_streaming(f) for f in oww_features
+                    ]
+                else:
+                    heard = [wake_word.process_streaming(f) for f in features]
+
+                if any(heard) and detected is None:
+                    detected = wake_word
 
             if self._stop_word is not None:
                 for feature in features:

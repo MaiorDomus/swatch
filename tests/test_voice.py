@@ -190,13 +190,14 @@ class TestOpenWakeWordSatellite(unittest.TestCase):
         for start in range(0, len(silence), 2000):
             satellite.on_audio(silence[start : start + 2000])
 
-        # 80 ms steps: 37 complete after 3 s minus the first step's context.
-        assert oww._steps == 37
+        # 80 ms steps after 3 s minus the first step's 30 ms of context; the
+        # phases that start 20-30 ms later complete one fewer.
+        assert oww._steps == {0: 37, 1: 37, 2: 36, 3: 36}
         assert 0 < oww.last_probability < 1
         assert wakes == []
 
         satellite.on_stream_end()
-        assert oww._steps == 0
+        assert oww._steps == {}
 
     def test_openwakeword_features_only_when_needed(self) -> None:
         satellite = VoiceSatellite(make_config(wake_word_dir=self.tmp_dir))
