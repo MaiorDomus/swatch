@@ -23,6 +23,7 @@ from swatch.audio import (
     compute_normalized_spectrum,
     compute_rms_dbfs,
     compute_spectral_flux,
+    compute_tone_prominence_db,
 )
 from swatch.config import AudioMonitorConfig
 from swatch.models import Detection
@@ -75,12 +76,8 @@ class TestComputeNormalizedSpectrum(unittest.TestCase):
         t = np.arange(1600) / 16000
         low_tone = np.sin(2 * np.pi * 120 * t)
 
-        window_a = ((low_tone + np.sin(2 * np.pi * 3000 * t)) * 10000).astype(
-            np.int16
-        )
-        window_b = ((low_tone + np.sin(2 * np.pi * 5000 * t)) * 10000).astype(
-            np.int16
-        )
+        window_a = ((low_tone + np.sin(2 * np.pi * 3000 * t)) * 10000).astype(np.int16)
+        window_b = ((low_tone + np.sin(2 * np.pi * 5000 * t)) * 10000).astype(np.int16)
 
         full_a = compute_normalized_spectrum(window_a)
         full_b = compute_normalized_spectrum(window_b)
@@ -120,8 +117,12 @@ class TestComputeNormalizedSpectrum(unittest.TestCase):
         full_b = compute_normalized_spectrum(window_b)
         full_flux = compute_spectral_flux(full_a, full_b)
 
-        low_a = compute_normalized_spectrum(window_a, sample_rate=16000, cutoff_hz=500.0)
-        low_b = compute_normalized_spectrum(window_b, sample_rate=16000, cutoff_hz=500.0)
+        low_a = compute_normalized_spectrum(
+            window_a, sample_rate=16000, cutoff_hz=500.0
+        )
+        low_b = compute_normalized_spectrum(
+            window_b, sample_rate=16000, cutoff_hz=500.0
+        )
         low_flux = compute_spectral_flux(low_a, low_b)
 
         assert low_flux < full_flux + 0.05
@@ -156,7 +157,10 @@ class TestComputeLowBandEnergyRatio(unittest.TestCase):
     guard against FFT leakage being mistaken for a real low-frequency hum."""
 
     def test_empty_array_is_zero(self) -> None:
-        assert compute_low_band_energy_ratio(np.array([], dtype=np.int16), 16000, 500) == 0.0
+        assert (
+            compute_low_band_energy_ratio(np.array([], dtype=np.int16), 16000, 500)
+            == 0.0
+        )
 
     def test_silence_is_zero(self) -> None:
         samples = np.zeros(1600, dtype=np.int16)
@@ -221,6 +225,87 @@ class TestComputeBandRmsDbfs(unittest.TestCase):
         alone_db = compute_band_rms_dbfs(alone, 16000, 500)
         assert abs(mixed_db - alone_db) < 0.5
         assert compute_low_band_energy_ratio(mixed, 16000, 500) < 0.1
+
+
+class TestBandAndTone(unittest.TestCase):
+    """level_band_hz, tone_band_hz and level_median_seconds: telling a fan's
+    motor tone apart from a TV's bass (measured on the kitchen hood,
+    2026-10-13)."""
+
+    RATE = 16000
+
+    def _signal(
+        self, seconds: int, tone_amplitude: float, bass_amplitude: float, seed: int = 1
+    ) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        t = np.arange(seconds * self.RATE) / self.RATE
+        tone = tone_amplitude * np.sin(2 * np.pi * 189 * t)
+        # TV-like bass: noise low-passed to below ~400 Hz, with a varying level.
+        noise = rng.normal(size=t.size)
+        spectrum = np.fft.rfft(noise)
+        spectrum[np.fft.rfftfreq(t.size, 1 / self.RATE) > 400] = 0
+        bass = np.fft.irfft(spectrum, n=t.size)
+        bass *= (
+            bass_amplitude
+            / (np.std(bass) or 1)
+            * (1 + 0.5 * np.sin(2 * np.pi * 0.3 * t))
+        )
+        return np.clip(tone + bass, -32768, 32767).astype(np.int16)
+
+    def test_band_level_with_low_edge_skips_lower_frequencies(self) -> None:
+        t = np.arange(self.RATE) / self.RATE
+        low = (np.sin(2 * np.pi * 80 * t) * 20000).astype(np.int16)
+        assert compute_band_rms_dbfs(low, self.RATE, 200, low_hz=160) < -60
+        assert compute_band_rms_dbfs(low, self.RATE, 200) > -10
+
+    def test_tone_stands_out_and_bass_does_not(self) -> None:
+        tone = self._signal(1, tone_amplitude=300, bass_amplitude=300)
+        bass = self._signal(1, tone_amplitude=0, bass_amplitude=3000)
+        assert compute_tone_prominence_db(tone, self.RATE, 184, 194) > 6
+        assert abs(compute_tone_prominence_db(bass, self.RATE, 184, 194)) < 3
+
+    def _states(self, samples: np.ndarray, **overrides: object) -> list[bool]:
+        config = AudioMonitorConfig(
+            name="hood",
+            rtsp_url="unused",
+            threshold_db=-70.0,
+            min_band_level_db=-55.0,
+            level_band_hz=(160, 200),
+            tone_band_hz=(184, 194),
+            min_tone_prominence_db=4.0,
+            level_median_seconds=10.0,
+            max_spectral_flux=99.0,
+            min_on_seconds=15.0,
+            min_off_seconds=15.0,
+            quiet_off_seconds=5.0,
+            **overrides,
+        )
+        monitor = AudioMonitor(config, multiprocessing.Event(), input_source="unused")
+        states = []
+        with mock.patch.object(AudioMonitor, "__record_transition__"):
+            for i in range(len(samples) // self.RATE):
+                monitor._process_window(
+                    samples[i * self.RATE : (i + 1) * self.RATE].tobytes()
+                )
+                states.append(monitor.is_on)
+        return states
+
+    def test_fan_under_tv_bass_turns_on(self) -> None:
+        assert self._states(self._signal(60, tone_amplitude=800, bass_amplitude=1500))[
+            -1
+        ]
+
+    def test_tv_bass_alone_stays_off(self) -> None:
+        assert not any(
+            self._states(self._signal(120, tone_amplitude=0, bass_amplitude=1500))
+        )
+
+    def test_fan_stopping_under_tv_turns_off(self) -> None:
+        fan = self._signal(60, tone_amplitude=800, bass_amplitude=1500)
+        tv = self._signal(60, tone_amplitude=0, bass_amplitude=1500, seed=2)
+        states = self._states(np.concatenate((fan, tv)))
+        assert states[59]
+        assert not any(states[60 + 25 :])
 
 
 class TestSoundStateClassifier(unittest.TestCase):

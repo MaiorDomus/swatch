@@ -241,6 +241,48 @@ class AudioMonitorConfig(SwatchBaseModel):
         ),
         default=None,
     )
+    level_band_hz: tuple[float, float] | None = Field(
+        title=(
+            "Measure min_band_level_db over just this frequency band (low, high "
+            "Hz) instead of everything at or below flux_band_cutoff_hz. A fan's "
+            "hum often sits in a narrow band, while a TV's bass (through a "
+            "subwoofer) spreads over all of the low band: measured 2026-10-13 on "
+            "a UniFi camera, the hood's 160-200 Hz level stayed above -46 dBFS "
+            "and the TV's mostly below -50, while their whole <500 Hz levels "
+            "overlapped. Unset (None) for the whole low band."
+        ),
+        default=None,
+    )
+    tone_band_hz: tuple[float, float] | None = Field(
+        title=(
+            "A narrow band (low, high Hz) where the fan has a tone of its own. "
+            "A window then only counts as the hum when this band stands out "
+            "from the spectrum on either side of it (each side twice as wide, "
+            "half a width away) by at least min_tone_prominence_db. Unlike a "
+            "level, that tells a fan's motor tone apart from loud bass of a TV "
+            "or music, and still works at a lower fan speed: measured "
+            "2026-10-13 on 8 recordings of the kitchen hood (one at a lower "
+            "speed) and 11 of a TV, the hood's tone at 184-194 Hz stood 3.5-9 "
+            "dB (10 s median) above its sides, the TV mostly below 1 dB. "
+            "Unset (None) to skip this check."
+        ),
+        default=None,
+    )
+    min_tone_prominence_db: float = Field(
+        title="How far (dB) tone_band_hz must stand out from its sides.",
+        default=3.0,
+    )
+    level_median_seconds: float | None = Field(
+        title=(
+            "Judge min_band_level_db (and the quiet check of quiet_off_seconds) "
+            "and min_tone_prominence_db on their median over the last "
+            "this-many seconds instead of "
+            "each window on its own, so a short burst of loud sound can't pass "
+            "for the hum and a short dip can't end it. The decision then lags a "
+            "real change by about half this time. Unset (None) for per-window."
+        ),
+        default=None,
+    )
     min_on_seconds: float = Field(
         title="How long loud + steady audio must be sustained before switching on.",
         default=5.0,

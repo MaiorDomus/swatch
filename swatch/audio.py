@@ -18,6 +18,7 @@ import logging
 import multiprocessing
 import subprocess
 import threading
+from collections import deque
 from typing import Protocol
 
 import numpy as np
@@ -150,10 +151,11 @@ def compute_low_band_energy_ratio(
 
 
 def compute_band_rms_dbfs(
-    samples: np.ndarray, sample_rate: int, cutoff_hz: float
+    samples: np.ndarray, sample_rate: int, cutoff_hz: float, low_hz: float = 0.0
 ) -> float:
     """RMS loudness (dBFS) of only the part of the signal at or below
-    cutoff_hz -- as if it had been through an ideal low-pass filter first.
+    cutoff_hz (and, with low_hz, at or above that) -- as if it had been
+    through an ideal low-pass (band-pass) filter first.
 
     Unlike compute_low_band_energy_ratio, this is an absolute level, not a
     share of the whole window: other sound playing on top (a podcast, a video)
@@ -174,12 +176,42 @@ def compute_band_rms_dbfs(
         power[-1] /= 2
 
     freqs = np.fft.rfftfreq(normalized.size, d=1.0 / sample_rate)
-    mean_square = float(power[freqs <= cutoff_hz].sum()) / normalized.size**2
+    in_band = (freqs <= cutoff_hz) & (freqs >= low_hz)
+    mean_square = float(power[in_band].sum()) / normalized.size**2
 
     if mean_square <= 0:
         return SILENT_DBFS
 
     return 10 * float(np.log10(mean_square))
+
+
+def compute_tone_prominence_db(
+    samples: np.ndarray, sample_rate: int, low_hz: float, high_hz: float
+) -> float:
+    """How far (dB) the mean power in low_hz..high_hz stands above the mean
+    power on either side of it (Hann-windowed). Each side is twice the
+    band's width and starts half a width away from it, so a tone slightly
+    wider than the band doesn't count against itself."""
+    if samples.size == 0:
+        return 0.0
+    windowed = samples.astype(np.float64) * np.hanning(samples.size)
+    power = np.abs(np.fft.rfft(windowed)) ** 2
+    freqs = np.fft.rfftfreq(samples.size, d=1.0 / sample_rate)
+    width = high_hz - low_hz
+
+    def mean_power(low: float, high: float) -> float:
+        band = power[(freqs >= low) & (freqs <= high)]
+        return float(band.mean()) if band.size else 0.0
+
+    tone = mean_power(low_hz, high_hz)
+    gap = width / 2
+    sides = (
+        mean_power(low_hz - gap - 2 * width, low_hz - gap)
+        + mean_power(high_hz + gap, high_hz + gap + 2 * width)
+    ) / 2
+    if tone <= 0 or sides <= 0:
+        return 0.0
+    return 10 * float(np.log10(tone / sides))
 
 
 def compute_spectral_flux(
@@ -414,6 +446,17 @@ class AudioMonitor:
             else None
         )
         self._quiet_windows = 0
+        median_windows = (
+            max(1, round(config.level_median_seconds / config.window_seconds))
+            if config.level_median_seconds is not None
+            else None
+        )
+        self._band_levels: deque[float] | None = (
+            deque(maxlen=median_windows) if median_windows else None
+        )
+        self._tone_prominences: deque[float] | None = (
+            deque(maxlen=median_windows) if median_windows else None
+        )
         self._window_bytes = int(config.sample_rate * config.window_seconds) * 2
         self._pending = bytearray()
         self._prev_spectrum: np.ndarray | None = None
@@ -465,6 +508,9 @@ class AudioMonitor:
             self.config.min_off_seconds,
         )
         self._quiet_windows = 0
+        for history in (self._band_levels, self._tone_prominences):
+            if history is not None:
+                history.clear()
 
     def on_audio(self, raw: bytes) -> None:
         """Buffer the source's chunks into window_seconds-long windows and
@@ -530,17 +576,14 @@ class AudioMonitor:
         # it isn't dragged down by other sound playing on top of the
         # fan, and quiet leakage below the cutoff can't reach it.
         has_band_level = (
-            (
-                compute_band_rms_dbfs(
-                    samples,
-                    self.config.sample_rate,
-                    self.config.flux_band_cutoff_hz,
-                )
-                if self.config.flux_band_cutoff_hz is not None
-                else loudness_db
-            )
-            >= self.config.min_band_level_db
+            self._band_level(samples, loudness_db) >= self.config.min_band_level_db
             if self.config.min_band_level_db is not None
+            else True
+        )
+
+        has_tone = (
+            self._tone_prominence(samples) >= self.config.min_tone_prominence_db
+            if self.config.tone_band_hz is not None
             else True
         )
 
@@ -548,6 +591,7 @@ class AudioMonitor:
             loudness_db >= self.config.threshold_db
             and has_band_energy
             and has_band_level
+            and has_tone
             and flux <= self.config.max_spectral_flux
         )
         self.is_on = self._classifier.update(is_candidate)
@@ -565,6 +609,42 @@ class AudioMonitor:
             self.is_on = self._classifier.force(False)
 
         self.__record_transition__()
+
+    def _band_level(self, samples: np.ndarray, loudness_db: float) -> float:
+        """The level min_band_level_db is compared against: of level_band_hz,
+        or of everything at or below flux_band_cutoff_hz, or of the whole
+        window; as the median over level_median_seconds when that is set."""
+        if self.config.level_band_hz is not None:
+            low, high = self.config.level_band_hz
+            level = compute_band_rms_dbfs(
+                samples, self.config.sample_rate, high, low_hz=low
+            )
+        elif self.config.flux_band_cutoff_hz is not None:
+            level = compute_band_rms_dbfs(
+                samples, self.config.sample_rate, self.config.flux_band_cutoff_hz
+            )
+        else:
+            level = loudness_db
+
+        if self._band_levels is None:
+            return level
+        self._band_levels.append(level)
+        return float(np.median(self._band_levels))
+
+    def _tone_prominence(self, samples: np.ndarray) -> float:
+        """How far (dB) tone_band_hz stands out from the same width on either
+        side; the median over level_median_seconds when that is set. Uses a
+        Hann window: without one, leakage from loud bass nearby fills the
+        sides and hides the tone."""
+        assert self.config.tone_band_hz is not None
+        prominence = compute_tone_prominence_db(
+            samples, self.config.sample_rate, *self.config.tone_band_hz
+        )
+
+        if self._tone_prominences is None:
+            return prominence
+        self._tone_prominences.append(prominence)
+        return float(np.median(self._tone_prominences))
 
     def _process_stream(self) -> None:
         """Run one ffmpeg session against this monitor's own input, without
