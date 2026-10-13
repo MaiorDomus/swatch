@@ -6,7 +6,10 @@ FROM crzynik/swatch-nginx:latest as nginx
 # crzynik/swatch-nginx binary above is linked against libpcre.so.3, so it
 # needs a Debian release that still ships it. Pinning avoids this breaking
 # again on a future rebuild if the tag drifts further.
-FROM python:3-bookworm
+# Python pinned to 3.14 too: python:3-bookworm moved to 3.15 on
+# 2026-10-12 and onnxruntime (openWakeWord) has no 3.15 wheels yet, so
+# `pip install` failed. Raise this once it does.
+FROM python:3.14-bookworm
 
 # install dependencies
 COPY requirements.txt /requirements.txt
