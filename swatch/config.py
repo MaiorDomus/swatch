@@ -450,6 +450,23 @@ class VoiceSatelliteConfig(SwatchBaseModel):
         ge=0,
         le=5,
     )
+    timer_sound: bool = Field(
+        title=(
+            'Let Home Assistant set timers on this satellite ("set a timer '
+            'for 10 minutes"), and ring on the camera speaker when one '
+            "finishes. Needs protect."
+        ),
+        default=True,
+    )
+    timer_rings: int = Field(
+        title=(
+            "How often a finished timer rings (about 1 s each, 2 s apart). "
+            'Any new command, e.g. the wake word and "stop", silences it.'
+        ),
+        default=5,
+        ge=1,
+        le=30,
+    )
     refractory_seconds: float = Field(
         title="Ignore further wake words for this long after one triggers.",
         default=2.0,

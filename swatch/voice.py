@@ -65,10 +65,15 @@ from aioesphomeapi.api_pb2 import (
     VoiceAssistantRequest,
     VoiceAssistantResponse,
     VoiceAssistantSetConfiguration,
+    VoiceAssistantTimerEventResponse,
     VoiceAssistantWakeWord,
 )
 from aioesphomeapi.core import MESSAGE_TYPE_TO_PROTO
-from aioesphomeapi.model import VoiceAssistantEventType, VoiceAssistantFeature
+from aioesphomeapi.model import (
+    VoiceAssistantEventType,
+    VoiceAssistantFeature,
+    VoiceAssistantTimerEventType,
+)
 from google.protobuf import message
 import pymicro_wakeword
 from pymicro_wakeword import MicroWakeWord, MicroWakeWordFeatures, Model
@@ -96,6 +101,9 @@ RUN_TIMEOUT_SECONDS = 60.0
 PLAY_TIMEOUT_SECONDS = 180.0
 # Each blink of listening_light_blinks: this long off, then this long on.
 LIGHT_BLINK_SECONDS = 0.3
+# Silence between two rings of a finished timer. The camera's mic is deaf
+# while it plays anything, so this is when a wake word can stop the ringing.
+TIMER_RING_PAUSE_SECONDS = 2.0
 DOWNLOAD_TIMEOUT_SECONDS = 30.0
 # Most mic audio held back while Home Assistant hasn't confirmed a run yet
 # (10 s at 16 kHz, 16-bit mono); anything older is dropped.
@@ -121,6 +129,9 @@ def _esphome_version() -> str:
 # it stops. Generated rather than shipped, short and quiet on purpose.
 WAKE_CUE_NOTES = (880.0, 1320.0)
 DONE_CUE_NOTES = (1320.0, 880.0)
+# A finished timer: louder, and long enough (~1 s) to notice.
+TIMER_CUE_NOTES = (1760.0, 1320.0) * 4
+TIMER_CUE_AMPLITUDE = 0.4
 CUE_SAMPLE_RATE = 24000
 CUE_AMPLITUDE = 0.15
 CUE_NOTE_SECONDS = 0.09
@@ -128,7 +139,9 @@ CUE_GAP_SECONDS = 0.03
 CUE_FADE_SECONDS = 0.012
 
 
-def write_cue(path: str, notes: Iterable[float]) -> None:
+def write_cue(
+    path: str, notes: Iterable[float], amplitude: float = CUE_AMPLITUDE
+) -> None:
     """Write a short, soft sequence of sine notes (with fades, so they
     don't click) to a 16-bit mono WAV file."""
     rate = CUE_SAMPLE_RATE
@@ -145,7 +158,7 @@ def write_cue(path: str, notes: Iterable[float]) -> None:
                 if edge < fade_len
                 else 1.0
             )
-            value = CUE_AMPLITUDE * envelope * math.sin(2 * math.pi * freq * i / rate)
+            value = amplitude * envelope * math.sin(2 * math.pi * freq * i / rate)
             frames += int(value * 32767).to_bytes(2, "little", signed=True)
 
         frames += gap
@@ -662,17 +675,33 @@ class VoiceSatellite:
         self._done_cue_pending = False
         self._cue_dir: str | None = None
         self._cues: dict[str, str] = {}
+        self._ring_task: asyncio.Task[None] | None = None
 
-        if self.speaker is not None and (config.wake_sound or config.done_sound):
+        if self.speaker is not None and (
+            config.wake_sound or config.done_sound or config.timer_sound
+        ):
             self._cue_dir = tempfile.mkdtemp(prefix=f"swatch-{self.name}-cues-")
 
-            for cue, enabled, notes in (
-                ("wake", config.wake_sound, WAKE_CUE_NOTES),
-                ("done", config.done_sound, DONE_CUE_NOTES),
+            for cue, enabled, notes, amplitude in (
+                ("wake", config.wake_sound, WAKE_CUE_NOTES, CUE_AMPLITUDE),
+                ("done", config.done_sound, DONE_CUE_NOTES, CUE_AMPLITUDE),
+                ("timer", config.timer_sound, TIMER_CUE_NOTES, TIMER_CUE_AMPLITUDE),
             ):
                 if enabled:
                     self._cues[cue] = os.path.join(self._cue_dir, f"{cue}.wav")
-                    write_cue(self._cues[cue], notes)
+                    write_cue(self._cues[cue], notes, amplitude)
+
+    @property
+    def feature_flags(self) -> int:
+        """What Home Assistant may use this satellite for. Timers only when
+        a finished one can ring: Home Assistant refuses to set timers on a
+        device without the flag ("timers aren't supported")."""
+        flags = SUPPORTED_FEATURES
+
+        if "timer" in self._cues:
+            flags |= VoiceAssistantFeature.TIMERS
+
+        return flags
 
     # -- lifecycle (loop thread) --------------------------------------------
 
@@ -700,6 +729,8 @@ class VoiceSatellite:
 
         if self._connection is not None:
             self._connection.close()
+
+        self._stop_ringing()
 
         if self.speaker is not None:
             if self.config.listening_light:
@@ -875,7 +906,7 @@ class VoiceSatellite:
                     model="Swatch Voice Satellite",
                     project_name="MaiorDomus.Swatch",
                     project_version="voice-satellite",
-                    voice_assistant_feature_flags=SUPPORTED_FEATURES,
+                    voice_assistant_feature_flags=self.feature_flags,
                 )
             ]
 
@@ -920,6 +951,10 @@ class VoiceSatellite:
             self.handle_announcement(msg)
             return []
 
+        if isinstance(msg, VoiceAssistantTimerEventResponse):
+            self.handle_timer_event(msg)
+            return []
+
         return []
 
     def _configuration_response(self) -> VoiceAssistantConfigurationResponse:
@@ -952,6 +987,9 @@ class VoiceSatellite:
         self._start_run(wake_word_phrase)
 
     def _start_run(self, wake_word_phrase: str = "") -> None:
+        # Any new command (e.g. "stop", or "cancel the timer") silences a
+        # ringing timer.
+        self._stop_ringing()
         self._last_run_activity = time.monotonic()
         self._pending_mic.clear()
         self._pending_mic_bytes = 0
@@ -1060,6 +1098,49 @@ class VoiceSatellite:
         self._announcing = True
         self._continue_conversation = msg.start_conversation
         self._play(urls)
+
+    def handle_timer_event(self, msg: VoiceAssistantTimerEventResponse) -> None:
+        """Home Assistant keeps the timers; it tells the satellite they were
+        set on about each change, and when one runs out the satellite rings."""
+        event = VoiceAssistantTimerEventType(msg.event_type)
+        name = f" {msg.name!r}" if msg.name else ""
+        logger.info(
+            "Voice satellite %s: timer%s %s (%s s of %s s left)",
+            self.name,
+            name,
+            event.name.removeprefix("VOICE_ASSISTANT_TIMER_").lower(),
+            msg.seconds_left,
+            msg.total_seconds,
+        )
+
+        if (
+            event == VoiceAssistantTimerEventType.VOICE_ASSISTANT_TIMER_FINISHED
+            and "timer" in self._cues
+            and self.loop is not None
+            and (self._ring_task is None or self._ring_task.done())
+        ):
+            self._ring_task = self.loop.create_task(self._ring())
+
+    async def _ring(self) -> None:
+        """Ring timer_rings times, unless a new command starts first."""
+        assert self.speaker is not None
+
+        for ring in range(self.config.timer_rings):
+            if ring:
+                await asyncio.sleep(TIMER_RING_PAUSE_SECONDS)
+
+            # Don't ring over a command or a reply; wait for it to end.
+            while self.pipeline_active:
+                await asyncio.sleep(0.2)
+
+            await self._play_cue_file(self._cues["timer"])
+
+    def _stop_ringing(self) -> None:
+        if self._ring_task is not None and not self._ring_task.done():
+            logger.info("Voice satellite %s: timer ringing stopped", self.name)
+            self._ring_task.cancel()
+
+        self._ring_task = None
 
     def _play_cue(self, cue: str) -> None:
         """Play a listening cue without waiting for it: the mic keeps

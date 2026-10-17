@@ -272,6 +272,12 @@ How it works:
   so the camera can't wake itself up.
 - A satellite on the same `rtsp_url` as an audio monitor shares its stream, so the
   camera only serves one RTSP connection for both.
+- Timers ("set a timer for 10 minutes") are kept by Home Assistant; when one runs
+  out, the camera rings (`timer_rings` times, 2 s apart). Saying the wake word
+  stops the ringing: any new command silences it. The mic is deaf while each ring
+  plays, so say it in a pause. Without `protect` (or with `timer_sound: false`) the
+  satellite doesn't offer timers, and Home Assistant answers that the device
+  doesn't support them.
 
 Without a `protect` block the satellite still listens and runs commands, it just
 doesn't speak the replies (or play the listening tones).
@@ -349,6 +355,13 @@ voice_satellites:
     # the satellite stops listening, before it goes off: a silent alternative to
     # done_sound (Default: shown below).
     listening_light_blinks: 0
+    # OPTIONAL: Let Home Assistant set timers on this satellite, and ring on the camera
+    # speaker when one finishes. Needs protect (Default: shown below).
+    timer_sound: true
+    # OPTIONAL: How often a finished timer rings (1-30, about 1 s each, 2 s apart), unless
+    # a new command (the wake word, then e.g. "stop") silences it first
+    # (Default: shown below).
+    timer_rings: 5
     # OPTIONAL: Ignore further wake words for this many seconds after one triggers
     # (Default: shown below).
     refractory_seconds: 2.0

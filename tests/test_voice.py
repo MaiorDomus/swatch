@@ -12,7 +12,11 @@ from typing import Any
 from unittest import mock
 
 from aioesphomeapi import APIClient
-from aioesphomeapi.model import VoiceAssistantEventType, VoiceAssistantFeature
+from aioesphomeapi.model import (
+    VoiceAssistantEventType,
+    VoiceAssistantFeature,
+    VoiceAssistantTimerEventType,
+)
 
 from swatch.config import ProtectConfig, VoiceSatelliteConfig
 from swatch.voice import (
@@ -317,18 +321,48 @@ class TestCues(unittest.TestCase):
 
     def test_cues_follow_config(self) -> None:
         both = VoiceSatellite(make_config(), speaker=FakeSpeaker())
-        assert set(both._cues) == {"wake", "done"}
+        assert set(both._cues) == {"wake", "done", "timer"}
 
-        wake_only = VoiceSatellite(make_config(done_sound=False), speaker=FakeSpeaker())
+        wake_only = VoiceSatellite(
+            make_config(done_sound=False, timer_sound=False), speaker=FakeSpeaker()
+        )
         assert set(wake_only._cues) == {"wake"}
 
         none = VoiceSatellite(
-            make_config(wake_sound=False, done_sound=False), speaker=FakeSpeaker()
+            make_config(wake_sound=False, done_sound=False, timer_sound=False),
+            speaker=FakeSpeaker(),
         )
         assert none._cues == {}
 
     def test_no_cues_without_a_speaker(self) -> None:
         assert VoiceSatellite(make_config())._cues == {}
+
+    def test_timer_cue_is_louder_and_longer(self) -> None:
+        satellite = VoiceSatellite(make_config(), speaker=FakeSpeaker())
+
+        with wave.open(satellite._cues["timer"]) as cue:
+            frames = cue.readframes(cue.getnframes())
+            seconds = cue.getnframes() / cue.getframerate()
+
+        peak = max(
+            abs(int.from_bytes(frames[i : i + 2], "little", signed=True))
+            for i in range(0, len(frames), 2)
+        )
+        assert 0.8 < seconds < 1.5
+        assert 0.3 * 32767 < peak < 0.5 * 32767
+
+    def test_timers_only_when_a_timer_can_ring(self) -> None:
+        timers = VoiceAssistantFeature.TIMERS
+        assert (
+            VoiceSatellite(make_config(), speaker=FakeSpeaker()).feature_flags & timers
+        )
+        assert not VoiceSatellite(make_config()).feature_flags & timers
+        assert not (
+            VoiceSatellite(
+                make_config(timer_sound=False), speaker=FakeSpeaker()
+            ).feature_flags
+            & timers
+        )
 
 
 class TestMicHoldBack(unittest.TestCase):
@@ -638,6 +672,7 @@ class TestHomeAssistantSession(unittest.IsolatedAsyncioTestCase):
         assert flags & VoiceAssistantFeature.VOICE_ASSISTANT
         assert flags & VoiceAssistantFeature.API_AUDIO
         assert flags & VoiceAssistantFeature.ANNOUNCE
+        assert flags & VoiceAssistantFeature.TIMERS
 
     async def test_wake_word_configuration(self) -> None:
         config = await self.client.get_voice_assistant_configuration(5)
@@ -745,6 +780,44 @@ class TestHomeAssistantSession(unittest.IsolatedAsyncioTestCase):
         assert self.speaker.played == ["http://ha/announce.mp3"]
         await self._settle()
         assert not self.satellite.pipeline_active
+
+    def _timer_event(self, event: VoiceAssistantTimerEventType) -> None:
+        self.client.send_voice_assistant_timer_event(
+            event, "t1", "pasta", 600, 0, False
+        )
+
+    def _rings(self) -> int:
+        return [Path(p).name for p in self.speaker.played].count("timer.wav")
+
+    async def test_finished_timer_rings(self) -> None:
+        self.satellite.config.timer_rings = 3
+        timers = VoiceAssistantTimerEventType
+        with mock.patch("swatch.voice.TIMER_RING_PAUSE_SECONDS", 0.01):
+            self._timer_event(timers.VOICE_ASSISTANT_TIMER_STARTED)
+            self._timer_event(timers.VOICE_ASSISTANT_TIMER_UPDATED)
+            await self._settle()
+            assert self._rings() == 0
+
+            self._timer_event(timers.VOICE_ASSISTANT_TIMER_FINISHED)
+            await self._settle()
+        assert self._rings() == 3
+
+    async def test_a_new_command_stops_the_ringing(self) -> None:
+        self.satellite.config.timer_rings = 10
+        with mock.patch("swatch.voice.TIMER_RING_PAUSE_SECONDS", 0.1):
+            self._timer_event(
+                VoiceAssistantTimerEventType.VOICE_ASSISTANT_TIMER_FINISHED
+            )
+            await self._settle(0.05)
+            self._on_loop(self.satellite.wakeup, "Okay Nabu")
+            await self._settle(0.5)
+        assert self._rings() == 1
+        assert self.starts == ["Okay Nabu"]
+
+    async def test_cancelled_timer_does_not_ring(self) -> None:
+        self._timer_event(VoiceAssistantTimerEventType.VOICE_ASSISTANT_TIMER_CANCELLED)
+        await self._settle()
+        assert self._rings() == 0
 
     async def test_wake_word_ignored_without_subscription(self) -> None:
         self.satellite._va_subscribed = False
